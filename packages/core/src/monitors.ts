@@ -1,4 +1,4 @@
-import { mkdir, readFile, readdir, realpath, rename, writeFile } from 'node:fs/promises';
+import { lstat, mkdir, readFile, readdir, realpath, rename, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { hostname } from 'node:os';
 import { randomUUID } from 'node:crypto';
@@ -81,10 +81,14 @@ export class MonitorStore {
     return failed;
   }
   async get(id: string): Promise<MonitorRecord> {
-    const value = JSON.parse(await readFile(join(this.path(id), 'monitor.json'), 'utf8')) as MonitorRecord;
+    const monitorRoot = this.path(id);
+    let rootStat;
+    try { rootStat = await lstat(monitorRoot); } catch (error) { throw error; }
+    if (!rootStat.isDirectory() || rootStat.isSymbolicLink()) throw new Error('Invalid persisted monitor');
+    const value = JSON.parse(await readFile(join(monitorRoot, 'monitor.json'), 'utf8')) as MonitorRecord;
     let rootMatches = false;
     if (typeof value.rootDirectory === 'string') {
-      try { rootMatches = await realpath(value.rootDirectory) === await realpath(this.path(id)); } catch { /* invalid or replaced monitor root */ }
+      try { rootMatches = await realpath(value.rootDirectory) === await realpath(monitorRoot); } catch { /* invalid or replaced monitor root */ }
     }
     if (value.version !== 1 || value.id !== id || typeof value.deviceId !== 'string' || !value.deviceId || !Number.isInteger(value.intervalMs) || value.intervalMs < 500 || value.intervalMs > 60000 || !Number.isInteger(value.durationMs) || value.durationMs < value.intervalMs || value.durationMs > 3600000 || !Number.isInteger(value.sampleCount) || value.sampleCount < 0 || !value.owner || !Number.isInteger(value.owner.pid) || value.owner.pid < 1 || typeof value.owner.host !== 'string' || !value.owner.host || typeof value.owner.session !== 'string' || !value.owner.session || !rootMatches || !['queued', 'running', 'releasing', 'completed', 'released', 'failed', 'interrupted'].includes(value.status)) throw new Error('Invalid persisted monitor');
     if (!terminalMonitor(value.status) && value.owner.host === hostname()) {

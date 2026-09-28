@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtemp, rm } from 'node:fs/promises';
+import { copyFile, mkdtemp, mkdir, rm, symlink } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { MonitorStore } from '../dist/index.js';
@@ -32,5 +32,19 @@ test('queued monitor ownership transfers exactly once to an independent worker s
     const claimed = await worker.get(monitor.id); claimed.status = 'running'; await worker.save(claimed);
     assert.equal((await owner.get(monitor.id)).status, 'running');
     await assert.rejects(owner.transferQueued(monitor, process.pid, workerSession), /changed|another worker/);
+  } finally { await rm(root, { recursive: true, force: true }); }
+});
+
+test('monitor rejects an ID directory retargeted through a symlink or junction', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'appvanta-monitor-retarget-'));
+  try {
+    const store = new MonitorStore(root);
+    const monitor = await store.create('device', 500, 1000);
+    const monitorRoot = join(root, monitor.id), retarget = join(root, 'retarget');
+    await mkdir(retarget);
+    await copyFile(join(monitorRoot, 'monitor.json'), join(retarget, 'monitor.json'));
+    await rm(monitorRoot, { recursive: true, force: true });
+    await symlink(retarget, monitorRoot, process.platform === 'win32' ? 'junction' : 'dir');
+    await assert.rejects(store.get(monitor.id), /Invalid persisted monitor/);
   } finally { await rm(root, { recursive: true, force: true }); }
 });

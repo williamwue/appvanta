@@ -31,7 +31,8 @@ export async function runAndroidFlow(serial: string, input: unknown, signal?: Ab
     try {
       const state = await inspectDeviceLock(serial);
       if (!state || !state.lease.runDirectory || await realpath(context.rootDirectory) !== state.lease.runDirectory) throw new Error('Pre-Flow lease binding changed');
-      await writeFile(resolve(context.rootDirectory, 'pre-flow-failure.json'), JSON.stringify({ version: 1, scope: 'run-created-callback', deviceId: serial, token: state.lease.token, runDirectory: context.rootDirectory, error: String(error) }, null, 2), { flag: 'wx' });
+      const runDirectory = state.lease.runDirectory;
+      await writeFile(resolve(runDirectory, 'pre-flow-failure.json'), JSON.stringify({ version: 1, scope: 'run-created-callback', deviceId: serial, token: state.lease.token, runDirectory, error: String(error) }, null, 2), { flag: 'wx' });
     } catch (evidenceError) {
       throw new AggregateError([error, evidenceError], 'Run creation callback and pre-Flow failure evidence both failed');
     }

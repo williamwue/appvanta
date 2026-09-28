@@ -26,5 +26,7 @@ export { previewUncertainTaskStep } from './uncertain-step-preview.js';
 export { recordUncertainStepAdjudication, readUncertainStepAdjudication } from './uncertain-step-adjudication.js';
 export { prepareAdjudicatedTaskContinuation, readAdjudicatedTaskContinuation } from './adjudicated-continuation.js';
 export type { AdjudicatedContinuationExpectation, AdjudicatedContinuationReadExpectation } from './adjudicated-continuation.js';
+export { reserveAdjudicatedSuccessor, reconcileAdjudicatedSuccessor, readAdjudicatedSuccessorReservation } from './successor-reservation.js';
+export type { SuccessorReservation, SuccessorReservationReceipt } from './successor-reservation.js';
 
 export { verifyEvidence } from "./archive.mjs";

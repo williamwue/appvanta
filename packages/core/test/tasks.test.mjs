@@ -1,9 +1,10 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtemp, readFile, readdir, rm } from 'node:fs/promises';
+import { mkdtemp, readFile, readdir, rm, mkdir, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { execFile } from 'node:child_process';
+import { createHash } from 'node:crypto';
 import { promisify } from 'node:util';
 import { TaskStore, parseFlow } from '../dist/index.js';
 
@@ -71,5 +72,38 @@ test('queued task ownership transfers exactly once to an independent worker sess
     const claimed = await worker.get(task.id); claimed.status = 'running'; await worker.save(claimed);
     assert.equal((await owner.get(task.id)).status, 'running');
     await assert.rejects(owner.transferQueued(task, process.pid, workerSession), /changed|another worker/);
+  } finally { await rm(root, { recursive: true, force: true }); }
+});
+
+test('reserved task publication is idempotent and fails closed on ambiguous or mismatched artifacts', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'appvanta-reserved-task-'));
+  const reservation = { id: '11111111-1111-4111-8111-111111111111', digestSha256: 'a'.repeat(64) };
+  try {
+    const store = new TaskStore(root), id = 'task-22222222-2222-4222-8222-222222222222';
+    const [first, second] = await Promise.all([1, 2].map(() => store.createReserved(id, 'device', flow, reservation)));
+    assert.equal(first.id, id); assert.equal(second.id, id);
+    assert.deepEqual(first.flow, second.flow);
+    assert.deepEqual(JSON.parse(await readFile(join(root, id, 'reservation.json'))), {
+      version: 1, taskId: id, reservationId: reservation.id, reservationDigestSha256: reservation.digestSha256,
+      deviceId: 'device', flowSha256: createHash('sha256').update(JSON.stringify(flow)).digest('hex'),
+    });
+    await assert.rejects(store.createReserved(id, 'other-device', flow, reservation), /marker|identity|differs/);
+    await assert.rejects(new TaskStore(root, '99999999-9999-4999-8999-999999999999')
+      .createReserved(id, 'device', flow, reservation), /live worker/);
+    const taskPath = join(root, id, 'task.json');
+    const foreign = JSON.parse(await readFile(taskPath, 'utf8'));
+    foreign.owner = { ...foreign.owner, host: 'untrusted-host' };
+    await writeFile(taskPath, JSON.stringify(foreign));
+    await assert.rejects(store.createReserved(id, 'device', flow, reservation), /unknown|adoption/);
+
+    const ambiguous = 'task-33333333-3333-4333-8333-333333333333';
+    await mkdir(join(root, ambiguous));
+    await assert.rejects(store.createReserved(ambiguous, 'device', flow, reservation), /missing.*marker|ambiguous/i);
+    const mismatch = 'task-44444444-4444-4444-8444-444444444444';
+    await mkdir(join(root, mismatch));
+    await writeFile(join(root, mismatch, 'reservation.json'), JSON.stringify({ version: 1, taskId: mismatch,
+      reservationId: reservation.id, reservationDigestSha256: 'b'.repeat(64), deviceId: 'device',
+      flowSha256: createHash('sha256').update(JSON.stringify(flow)).digest('hex') }));
+    await assert.rejects(store.createReserved(mismatch, 'device', flow, reservation), /marker|identity|match/);
   } finally { await rm(root, { recursive: true, force: true }); }
 });

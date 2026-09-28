@@ -1,8 +1,10 @@
-import { mkdir, readFile, writeFile, rename, readdir, unlink } from 'node:fs/promises';
+import { mkdir, readFile, writeFile, rename, readdir, unlink, open } from 'node:fs/promises';
 import { join } from 'node:path';
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import { hostname } from 'node:os';
-import type { FlowDefinition } from './flow-schema.js';
+import { isDeepStrictEqual } from 'node:util';
+import { setTimeout as delay } from 'node:timers/promises';
+import { parseFlow, type FlowDefinition } from './flow-schema.js';
 import type { CompletionNotificationRecord } from './notifications.js';
 
 export type TaskStatus = 'queued' | 'running' | 'pausing' | 'paused' | 'cancelling' | 'passed' | 'failed' | 'cancelled' | 'interrupted';
@@ -23,11 +25,22 @@ export interface TaskRecord {
 }
 export const terminalTask = (status: TaskStatus) => ['passed', 'failed', 'cancelled', 'interrupted'].includes(status);
 const uuidPattern = /^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/;
+const isCode = (error: unknown, code: string) => !!error && typeof error === 'object' && 'code' in error && error.code === code;
+const createFlowDigest = (flow: FlowDefinition) => createHash('sha256').update(JSON.stringify(flow)).digest('hex');
+function sameReservedTask(task: TaskRecord, id: string, deviceId: string, flow: FlowDefinition,
+  options: { completionWebhook?: string }) {
+  return task.version === 1 && task.id === id && task.deviceId === deviceId && task.status === 'queued' &&
+    isDeepStrictEqual(task.flow, flow) && (options.completionWebhook === undefined
+      ? task.completionWebhook === undefined : task.completionWebhook === options.completionWebhook) &&
+    !!task.owner && Number.isSafeInteger(task.owner.pid) && task.owner.pid > 0 &&
+    typeof task.owner.host === 'string' && task.owner.host.trim().length > 0 && uuidPattern.test(task.owner.session);
+}
 
 /** A single owner writes each task; other processes can query or request cancellation. */
 export class TaskStore {
   private readonly writes = new Map<string, Promise<void>>();
   constructor(readonly directory: string, private readonly session: string = randomUUID()) { if (!uuidPattern.test(session)) throw new Error('Invalid task worker session'); }
+  get workerSession(): string { return this.session; }
   private path(id: string) {
     if (!/^task-[a-f0-9-]{36}$/.test(id)) throw new Error('Invalid task id');
     return join(this.directory, id);
@@ -38,6 +51,92 @@ export class TaskStore {
     await mkdir(this.path(task.id));
     await this.save(task);
     return task;
+  }
+
+  /** Publishes a task at a predetermined ID guarded by an immutable reservation marker. */
+  async createReserved(id: string, deviceId: string, flow: FlowDefinition, reservation: {
+    readonly id: string; readonly digestSha256: string;
+  }, options: { completionWebhook?: string } = {}): Promise<TaskRecord> {
+    if (!/^task-[a-f0-9-]{36}$/.test(id) || !uuidPattern.test(reservation.id) ||
+      !/^[a-f0-9]{64}$/.test(reservation.digestSha256) || typeof deviceId !== 'string' || !deviceId.trim())
+      throw new Error('Invalid reserved task identity');
+    const parsedFlow = parseFlow(flow);
+    const expectedMarker = { version: 1, taskId: id, reservationId: reservation.id,
+      reservationDigestSha256: reservation.digestSha256, deviceId,
+      flowSha256: createFlowDigest(parsedFlow) };
+    await mkdir(this.directory, { recursive: true });
+    const root = this.path(id);
+    let createdDirectory = true;
+    try { await mkdir(root); }
+    catch (error) { if (!isCode(error, 'EEXIST')) throw error; createdDirectory = false; }
+    const markerPath = join(root, 'reservation.json');
+    let marker: unknown;
+    try { marker = JSON.parse(await readFile(markerPath, 'utf8')); }
+    catch (error) {
+      if (!isCode(error, 'ENOENT')) throw error;
+      // A fresh directory gets its immutable marker before task.json. A directory
+      // that already existed without it is an ambiguous crash artifact.
+      if (!createdDirectory) {
+        for (let attempt = 0; attempt < 20; attempt++) {
+          await delay(5);
+          try { marker = JSON.parse(await readFile(markerPath, 'utf8')); break; }
+          catch (retryError) { if (!isCode(retryError, 'ENOENT')) throw retryError; }
+        }
+        if (!marker) throw new Error('Reserved task directory is missing its reservation marker');
+      }
+      if (marker) { /* another publisher won the marker race */ }
+      else {
+      const names = await readdir(root);
+      if (names.length) throw new Error('Reserved task directory is missing its reservation marker');
+      try {
+        const handle = await open(markerPath, 'wx');
+        try { await handle.writeFile(JSON.stringify(expectedMarker, null, 2)); await handle.sync(); }
+        finally { await handle.close(); }
+        marker = expectedMarker;
+      } catch (markerError) {
+        if (!isCode(markerError, 'EEXIST')) throw markerError;
+        marker = JSON.parse(await readFile(markerPath, 'utf8'));
+      }
+      }
+    }
+    if (!isDeepStrictEqual(marker, expectedMarker)) throw new Error('Reserved task marker does not match request');
+    const taskPath = join(root, 'task.json');
+    let names = await readdir(root);
+    for (let attempt = 0; attempt < 20 && !names.includes('task.json') &&
+      names.some(name => /^state-[a-f0-9-]+\.tmp$/.test(name)); attempt++) {
+      await delay(5); names = await readdir(root);
+    }
+    if (names.some(name => name !== 'reservation.json' && name !== 'task.json'))
+      throw new Error('Reserved task directory contains ambiguous crash artifacts');
+    try {
+      const existing = JSON.parse(await readFile(taskPath, 'utf8')) as TaskRecord;
+      if (!sameReservedTask(existing, id, deviceId, parsedFlow, options))
+        throw new Error('Reserved task identity or Flow differs from existing task');
+      if (existing.owner.host !== hostname())
+        throw new Error('Reserved task owner host is unknown; refusing adoption');
+      // A task owned by another live process must never be silently adopted.
+      if (existing.owner.pid !== process.pid || existing.owner.session !== this.session) {
+        try { process.kill(existing.owner.pid, 0); throw new Error('Reserved task is owned by a live worker'); }
+        catch (error) { if (error instanceof Error && error.message === 'Reserved task is owned by a live worker') throw error; if (!isCode(error, 'ESRCH')) throw error; }
+      }
+      return await this.get(id);
+    } catch (error) {
+      if (!isCode(error, 'ENOENT')) throw error;
+    }
+    const task: TaskRecord = { version: 1, id, deviceId, flow: parsedFlow,
+      owner: { pid: process.pid, host: hostname(), session: this.session }, startedAt: new Date().toISOString(),
+      status: 'queued', ...(options.completionWebhook ? { completionWebhook: options.completionWebhook } : {}) };
+    try {
+      // The task file itself is the cross-process publication point. wx prevents a
+      // concurrent publisher from replacing a valid task or stealing its owner.
+      const handle = await open(taskPath, 'wx');
+      try { await handle.writeFile(JSON.stringify(task, null, 2)); await handle.sync(); }
+      finally { await handle.close(); }
+      return task;
+    } catch (error) {
+      if (!isCode(error, 'EEXIST')) throw error;
+      return this.createReserved(id, deviceId, parsedFlow, reservation, options);
+    }
   }
   async save(task: TaskRecord): Promise<void> {
     if (task.owner.session !== this.session || task.owner.pid !== process.pid) throw new Error('Task is owned by another worker');

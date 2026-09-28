@@ -16,6 +16,25 @@ const runNpm = async (args, options = {}) => {
   return run('npm', args, options);
 };
 let mcpChild;
+let verificationError;
+
+const stopMcpChild = async child => {
+  if (!child) return;
+  const active = child.exitCode === null && child.signalCode === null;
+  if (active) {
+    try { child.stdin?.end(); } catch {}
+    const exited = once(child, 'exit');
+    try { child.kill(); } catch {}
+    await Promise.race([exited, new Promise(resolveExit => setTimeout(resolveExit, 5000))]);
+    if (child.exitCode === null && child.signalCode === null) {
+      try { child.kill('SIGKILL'); } catch {}
+      await Promise.race([once(child, 'exit'), new Promise(resolveExit => setTimeout(resolveExit, 1000))]);
+    }
+  }
+  try { child.stdin?.destroy(); } catch {}
+  try { child.stdout?.destroy(); } catch {}
+  try { child.stderr?.destroy(); } catch {}
+};
 
 try {
   await runNpm(['run', 'build'], { cwd: root });
@@ -60,7 +79,18 @@ try {
   await mkdir(outputDirectory, { recursive: true });
   await writeFile(join(outputDirectory, 'release-package-verification.json'), JSON.stringify(result, null, 2));
   console.log(JSON.stringify(result));
+} catch (error) {
+  verificationError = error;
+  throw error;
 } finally {
-  if (mcpChild && mcpChild.exitCode === null && mcpChild.signalCode === null) { const exited = once(mcpChild, 'exit'); mcpChild.kill(); await exited; }
-  await rm(workspace, { recursive: true, force: true, maxRetries: 8, retryDelay: 250 });
+  let cleanupError;
+  try { await stopMcpChild(mcpChild); }
+  catch (error) { cleanupError = error; }
+  try {
+    await new Promise(resolveCleanup => setTimeout(resolveCleanup, 250));
+    await rm(workspace, { recursive: true, force: true, maxRetries: 20, retryDelay: 500 });
+  } catch (error) { cleanupError ??= error; }
+  // Preserve the verification failure if cleanup also fails. A successful
+  // verification still reports bounded cleanup failure to avoid hiding leaks.
+  if (!verificationError && cleanupError) throw cleanupError;
 }
