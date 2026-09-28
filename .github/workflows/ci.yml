@@ -21,6 +21,19 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: '3.11'
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - name: Set up Android Platform-Tools
+        uses: android-actions/setup-android@be39fa834029ff78f1a44aa3bb0819b8fc2bd8fd # v4.0.4
+        timeout-minutes: 8
+        with:
+          cmdline-tools-version: '14742923' # 20.0; supports the portable OS matrix
+          packages: 'platform-tools'
+          log-accepted-android-sdk-licenses: 'false'
+      - name: Verify adb is runnable
+        run: adb version
       - run: npm ci
       - run: npm run build
       - run: npm test
@@ -44,6 +57,9 @@ jobs:
     name: Android emulator smoke
     runs-on: ubuntu-latest
     timeout-minutes: 35
+    env:
+      ANDROID_HOME: ${{ runner.temp }}/appvanta-android-sdk
+      ANDROID_SDK_ROOT: ${{ runner.temp }}/appvanta-android-sdk
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -56,26 +72,65 @@ jobs:
           java-version: '17'
       - run: npm ci
       - run: npm run build
+      - name: Set up Android SDK command-line tools
+        uses: android-actions/setup-android@be39fa834029ff78f1a44aa3bb0819b8fc2bd8fd # v4.0.4
+        timeout-minutes: 5
+        with:
+          cmdline-tools-version: '15859902' # 22.0
+          packages: ''
+          log-accepted-android-sdk-licenses: 'false'
       - name: Install Android emulator image
         shell: bash
+        timeout-minutes: 14
         run: |
-          yes | sdkmanager --licenses >/dev/null || true
-          sdkmanager "platform-tools" "emulator" "platforms;android-35" "system-images;android-35;google_apis;x86_64"
-          echo no | avdmanager create avd --force --name appvanta-ci --package "system-images;android-35;google_apis;x86_64" --device pixel_6
+          sdkmanager="$ANDROID_SDK_ROOT/cmdline-tools/22.0/bin/sdkmanager"
+          avdmanager="$ANDROID_SDK_ROOT/cmdline-tools/22.0/bin/avdmanager"
+          test -x "$sdkmanager" && test -x "$avdmanager"
+          "$sdkmanager" --sdk_root="$ANDROID_SDK_ROOT" \
+            "platform-tools" "emulator" "platforms;android-35" \
+            "system-images;android-35;google_apis;x86_64"
+          printf 'no\n' | "$avdmanager" create avd --force --name appvanta-ci \
+            --package "system-images;android-35;google_apis;x86_64" --device pixel_6
+          test -x "$ANDROID_SDK_ROOT/platform-tools/adb"
+          test -x "$ANDROID_SDK_ROOT/emulator/emulator"
+      - name: Enable KVM acceleration
+        shell: bash
+        timeout-minutes: 1
+        run: |
+          test -c /dev/kvm
+          sudo chmod a+rw /dev/kvm
+          test -r /dev/kvm && test -w /dev/kvm
+          "$ANDROID_SDK_ROOT/emulator/emulator" -accel-check
       - name: Start emulator
         shell: bash
+        timeout-minutes: 7
         run: |
-          nohup "$ANDROID_HOME/emulator/emulator" -avd appvanta-ci -no-window -no-audio -no-boot-anim -no-snapshot -gpu swiftshader_indirect > emulator.log 2>&1 &
-          adb wait-for-device
-          for attempt in $(seq 1 180); do
-            if [ "$(adb shell getprop sys.boot_completed 2>/dev/null | tr -d '\r')" = "1" ]; then break; fi
-            if [ "$attempt" = "180" ]; then echo "Emulator boot timed out"; exit 1; fi
+          adb="$ANDROID_SDK_ROOT/platform-tools/adb"
+          nohup "$ANDROID_SDK_ROOT/emulator/emulator" -avd appvanta-ci -accel on -no-window -no-audio -no-boot-anim -no-snapshot -gpu swiftshader_indirect > emulator.log 2>&1 &
+          emulator_pid=$!
+          if ! timeout 120s "$adb" wait-for-device; then
+            echo "Emulator did not connect within 120 seconds"
+            tail -n 80 emulator.log
+            exit 1
+          fi
+          boot_deadline=$((SECONDS + 240))
+          until [ "$(timeout 5s "$adb" shell getprop sys.boot_completed 2>/dev/null | tr -d '\r')" = "1" ]; do
+            if ! kill -0 "$emulator_pid" 2>/dev/null; then
+              echo "Emulator exited before boot completed"
+              tail -n 80 emulator.log
+              exit 1
+            fi
+            if (( SECONDS >= boot_deadline )); then
+              echo "Emulator boot timed out after 240 seconds"
+              tail -n 80 emulator.log
+              exit 1
+            fi
             sleep 2
           done
-          adb shell settings put global window_animation_scale 0
-          adb shell settings put global transition_animation_scale 0
-          adb shell settings put global animator_duration_scale 0
-          adb devices -l
+          timeout 15s "$adb" shell settings put global window_animation_scale 0
+          timeout 15s "$adb" shell settings put global transition_animation_scale 0
+          timeout 15s "$adb" shell settings put global animator_duration_scale 0
+          "$adb" devices -l
       - name: Download pinned Markor APK
         shell: bash
         run: |

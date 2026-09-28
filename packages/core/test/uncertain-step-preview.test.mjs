@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { mkdtemp, mkdir, readFile, readdir, rm, rmdir, stat, writeFile } from 'node:fs/promises';
+import { mkdtemp, mkdir, readFile, readdir, realpath, rm, rmdir, stat, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir, hostname } from 'node:os';
 import { join } from 'node:path';
 import { claimTaskContinuation, previewUncertainTaskStep, recordUncertainStepAdjudication,
@@ -97,7 +97,7 @@ test('adjudication records a bound skip intent without changing task, run, or le
     }, lock.directory);
     assert.equal(decision.resumeAuthorized, false);
     assert.equal(decision.claimId, f.claim.id);
-    assert.equal(decision.lease.runDirectory, f.successorRun);
+    assert.equal(decision.lease.runDirectory, lock.lease.runDirectory);
     assert.deepEqual((await readUncertainStepAdjudication(f.store, f.successor.id)).postconditionCheckpoint,
       { kind: 'text-visible', text: 'Done' });
     assert.deepEqual(await Promise.all(tracked.map(path => readFile(path))), before);
@@ -107,6 +107,37 @@ test('adjudication records a bound skip intent without changing task, run, or le
       operator: 'operator-2', reason: 'duplicate', verdict: 'unresolved',
     }, lock.directory), { code: 'EEXIST' });
     assert.equal((await readUncertainStepAdjudication(f.store, f.successor.id)).operator, 'operator-1');
+  } finally { await rm(f.root, { recursive: true, force: true }); }
+});
+
+test('adjudication keeps an aliased lease snapshot and rejects alias retargeting', async () => {
+  const f = await fixture();
+  try {
+    const alias = join(f.root, 'successor-run-alias');
+    await symlink(f.successorRun, alias, process.platform === 'win32' ? 'junction' : 'dir');
+    const lock = await leaseFixture(f);
+    const lease = { ...lock.lease, runDirectory: alias };
+    await save(lock.path, lease);
+    const preview = await previewUncertainTaskStep(f.store, f.successor.id);
+    const decision = await recordUncertainStepAdjudication(f.store, f.successor.id, {
+      expectedPreviewDigestSha256: preview.previewDigestSha256, expectedLeaseToken: lease.token,
+      operator: 'reviewer', reason: 'Alias binding', verdict: 'postcondition-verified-skip',
+      postconditionCheckpoint: { kind: 'text-visible', text: 'Done' },
+    }, lock.directory);
+    assert.equal(decision.runDirectory, await realpath(f.successorRun));
+    assert.equal(decision.lease.runDirectory, alias);
+    assert.deepEqual(decision.lease.snapshot, lease);
+    assert.deepEqual(await readUncertainStepAdjudication(f.store, f.successor.id), decision);
+    const expected = { decisionId: decision.id, previewDigestSha256: preview.previewDigestSha256,
+      leaseToken: lease.token };
+    const prepared = await prepareAdjudicatedTaskContinuation(f.store, f.successor.id, expected, lock.directory);
+    assert.equal(prepared.claim.resumeAuthorized, false);
+    await rm(alias);
+    await symlink(f.sourceRun, alias, process.platform === 'win32' ? 'junction' : 'dir');
+    await assert.rejects(readUncertainStepAdjudication(f.store, f.successor.id), /Invalid adjudication record/);
+    await assert.rejects(readAdjudicatedTaskContinuation(f.store, f.successor.id, {
+      ...expected, preparationId: prepared.claim.id, preparationDigestSha256: prepared.preparationDigestSha256,
+    }, lock.directory));
   } finally { await rm(f.root, { recursive: true, force: true }); }
 });
 
@@ -161,7 +192,7 @@ test('real version 2 dead-owner lease records intent and prepares only a non-run
   try {
     const lock = await realVersion2LeaseFixture(f);
     assert.equal(lock.lease.version, 2);
-    assert.equal(lock.lease.runDirectory, f.successorRun);
+    assert.equal(lock.lease.runDirectory, await realpath(f.successorRun));
     assert.match(lock.lease.processToken, /^[a-f0-9-]{36}$/);
     assert.equal(lock.lease.cleanupRequired.reason, 'explicit');
     assert.equal(await inspectDeviceAdmissionJournal(lock.lease, lock.directory), 'resolved');

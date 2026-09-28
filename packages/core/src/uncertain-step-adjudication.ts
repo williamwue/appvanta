@@ -99,7 +99,7 @@ export async function recordUncertainStepAdjudication(store: TaskStore, successo
     activeStepIndex: before.activeStepIndex, activeIdentity: before.activeIdentity,
     activeStep: before.activeStep, revision: before.revision,
     previewDigestSha256: before.previewDigestSha256,
-    lease: { deviceId: task.deviceId, token: firstLease.lease.token, runDirectory: before.runDirectory,
+    lease: { deviceId: task.deviceId, token: firstLease.lease.token, runDirectory: firstLease.lease.runDirectory,
       snapshot: firstLease.lease },
     operator: decisionInput.operator, reason: decisionInput.reason, verdict: decisionInput.verdict,
     postconditionCheckpoint: condition, resumeAuthorized: false as const,
@@ -149,7 +149,8 @@ export async function readUncertainStepAdjudication(store: TaskStore, successorT
     || identity.instructionId !== undefined && !instructionId(identity.instructionId)
     || !r.activeStep || typeof r.activeStep !== 'object' || !lease || !validLeaseSnapshot(snapshot)
     || !exactKeys(lease, ['deviceId', 'token', 'runDirectory', 'snapshot'])
-    || typeof lease.deviceId !== 'string' || !uuid(lease.token) || lease.runDirectory !== r.runDirectory
+    || typeof lease.deviceId !== 'string' || !uuid(lease.token)
+    || typeof lease.runDirectory !== 'string' || await realpath(lease.runDirectory) !== r.runDirectory
     || snapshot.token !== lease.token || snapshot.deviceId !== lease.deviceId
     || snapshot.runDirectory !== lease.runDirectory || !label(r.operator, 120) || !label(r.reason, 1000)
     || !validCheckpoint || r.resumeAuthorized !== false) throw new Error('Invalid adjudication record');

@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
 import { once } from 'node:events';
-import { mkdtemp, readFile, writeFile, rm } from 'node:fs/promises';
+import { mkdtemp, readFile, realpath, writeFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { inspectFlowProgress, prepareFlowContinuation, inspectTaskProgress, claimTaskContinuation, TaskStore } from '../dist/index.js';
@@ -117,7 +117,7 @@ test('killed Flow preserves verified prefix and distinguishes boundary from unce
           assert.equal(claims.filter(item => item.status === 'rejected').length, 1);
           const saved = JSON.parse(await readFile(join(store.directory, task.id, 'continuation', 'claim.json'), 'utf8'));
           assert.equal(saved.sourceTaskId, task.id);
-          assert.equal(saved.source.runDirectory, message.root);
+          assert.equal(saved.source.runDirectory, await realpath(message.root));
           assert.equal(saved.flow.resetApplications, undefined);
           await assert.rejects(claimTaskContinuation(store, task.id, checkpoint), /EEXIST/);
           assert.equal((await store.get(task.id)).status, 'interrupted');

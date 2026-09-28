@@ -2,9 +2,11 @@
 
 AppVanta 可在 Jenkins、GitHub Actions 或任意 Node 环境执行。最小流水线：
 
-仓库提供 `Jenkinsfile` 和 `.github/workflows/ci.yml`。GitHub Actions 配置包含 Windows、Linux、macOS 的 Node 22 干净安装/构建/测试和 Python 恢复测试，并单独启动 API 35 Google APIs 模拟器，下载固定 Markor 2.16.1 APK、校验 SHA-256、安装并执行 `docs/examples/markor-ci-flow.json`。所有任务通过 `scripts/stage-evidence.mjs` 筛选运行证据；归档排除 CA/私钥、工具目录和符号链接，包含文件哈希清单。
+仓库提供 `Jenkinsfile` 和 `.github/workflows/ci.yml`。GitHub Actions 配置包含 Windows、Linux、macOS 的 Node 22 干净安装/构建/测试和 Python 恢复测试，并单独启动 API 35 Google APIs 模拟器，下载固定 Markor 2.16.1 APK、校验 SHA-256、安装并执行 `docs/examples/markor-ci-flow.json`。三个便携 job 均先安装 JDK 17、固定版本的 Android SDK Command-line Tools 20.0，再安装 Platform-Tools 并运行 `adb version`，使发布包校验中的严格 `doctor` 检查能调用真实的 `adb`。所有任务通过 `scripts/stage-evidence.mjs` 筛选运行证据；归档排除 CA/私钥、工具目录和符号链接，包含文件哈希清单。
 
-当前仓库没有 Git remote，因此这些 workflow 还没有托管运行结果。配置存在不等于三个宿主和模拟器已通过；首次推送后必须检查每个 job 的日志和上传证据，再更新验收状态。
+Android job 在独立的临时 SDK 目录安装固定版本的 Android SDK Command-line Tools 22.0，再安装 API 35 Google APIs x86_64 镜像、创建 AVD，并检查 `/dev/kvm` 权限与模拟器加速。SDK 安装、设备连接和启动均有超时；失败时仍上传 `emulator.log` 和已有的运行证据。命令行工具版本及 SDK 路径由 [setup-android v4.0.4](https://github.com/android-actions/setup-android/tree/v4.0.4) 和 [Android sdkmanager 文档](https://developer.android.com/tools/sdkmanager) 定义；[Android 模拟器加速文档](https://developer.android.com/studio/run/emulator-acceleration)说明 KVM 检查。
+
+首次公开运行 [#36435782854](https://github.com/williamwue/appvanta/actions/runs/36435782854) 的 Android job 在安装镜像前因 `sdkmanager: command not found` 失败，Linux 便携 job 的发布包校验则因 `spawn adb ENOENT` 失败。此处修复尚需新的托管运行确认；配置和本地检查本身不构成 Android 模拟器或三个便携 job 通过的证据。验收时应检查四个 job 的结论、Android Flow 日志和上传证据。
 
 ```bash
 npm ci

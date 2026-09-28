@@ -1,6 +1,6 @@
 # AppVanta 当前状态与剩余任务
 
-更新：2026-09-28。本文件汇总当前有界验收；阶段清单中的逐次记录作为带日期的历史证据，旧段落中的“待完成”应结合本文件及后续验收读取。最终目标仍是覆盖固定版本 Argent / ARTEMIS 的全部公开可验证功能，不因本轮收尾缩小范围。以下 39 项待办保持完整。
+更新：2026-09-28。本文件汇总当前有界验收；阶段清单中的逐次记录作为带日期的历史证据，旧段落中的“待完成”应结合本文件及后续验收读取。最终目标仍是覆盖固定版本 Argent / ARTEMIS 的全部公开可验证功能，不因本轮收尾缩小范围。以下 39 项清单保持完整，1 项已完成、38 项仍待办。
 
 ## 本轮已完成的范围
 
@@ -40,7 +40,7 @@
 - 2026-09-26 API 35 SDK 镜像首次安装曾因 `Error reading Zip content from a SeekableByteChannel` 失败；随后 r9 安装和 API 35 AVD boot 通过。先前失败是历史记录，不再是当前阻塞项。
 - `8825da3` 的本地 `verify:release-packages` 四包检查退出 0，`doctor` 为 ready，MCP 列出 49 个工具；同修订的 API 37 Markor CLI 单步冒烟通过，`cleanupFailed: false`，事后 `inspectDeviceLock` 为 null。单次模拟器冒烟不等于托管 CI、跨平台或真机验收。
 - `8825da3` 的 API 37 实际录屏及 Perfetto 取消验收通过：两类记录均为已取消且已清理；这仅覆盖该次模拟器取消路径，不覆盖 P0-04 的全部故障组合。
-- 集成修订 `32f9d56` 的录屏传输修复已独立复核，全部包构建及 `npm test` 通过；集成修订 `de1541a` 的不可变准备读取/原始字节摘要边界通过全部包构建及完整 core 52 项测试。租约守卫 `f8d7492` 经独立复核未发现问题（42 项聚焦回归），已在 `8825da3` 集成并保留已复核的录屏实现；该集成修订的 `npm run build` 和 `npm test` 均通过。严格裁决租约快照修复 `908a74e` 经独立复核未发现问题，已在 `0b4cff7` 集成；该修订全部包构建及完整 core 74 项测试通过。它严格接受有效版本 1/2 租约及精确的可选 `processToken`、`cleanupRequired` 字段，记录/准备/读取测试覆盖真实子进程退出后遗留的版本 2 租约，并维持 `resumeAuthorized: false`。可运行的受保护检查点与后继任务续跑仍未完成。各次数量绑定其修订，不推算最新统一全套测试数。公开空仓库 <https://github.com/williamwue/appvanta> 已存在，私密漏洞报告已启用；主页描述和 topics 已设置，但源码分支尚未推送，托管 CI、发布门禁及真机/OEM 验收未完成。上述 `.appvanta/` 证据为本机忽略文件，公开仓库当前不含这些证据。2026-09-26 的 77 项（core 31、Android 28、脚本 18）和 `.appvanta/wrapup-build.log`、`.appvanta/wrapup-tests.log` 是当时的历史快照。
+- 集成修订 `32f9d56` 的录屏传输修复已独立复核，全部包构建及 `npm test` 通过；集成修订 `de1541a` 的不可变准备读取/原始字节摘要边界通过全部包构建及完整 core 52 项测试。租约守卫 `f8d7492` 经独立复核未发现问题（42 项聚焦回归），已在 `8825da3` 集成并保留已复核的录屏实现；该集成修订的 `npm run build` 和 `npm test` 均通过。严格裁决租约快照修复 `908a74e` 经独立复核未发现问题，已在 `0b4cff7` 集成；该修订全部包构建及完整 core 74 项测试通过。它严格接受有效版本 1/2 租约及精确的可选 `processToken`、`cleanupRequired` 字段，记录/准备/读取测试覆盖真实子进程退出后遗留的版本 2 租约，并维持 `resumeAuthorized: false`。可运行的受保护检查点与后继任务续跑仍未完成。各次数量绑定其修订，不推算最新统一全套测试数。公开仓库 <https://github.com/williamwue/appvanta> 已发布实验性源码快照：`main` 的初始提交 [`93749a0`](https://github.com/williamwue/appvanta/commit/93749a0cb87937149376aaac16adf8d199660acb) 为无父提交，其树 `03a5fb1` 与本地集成修订 `fda6c8b` 的树完全一致；主页描述、topics 与私密漏洞报告入口已设置。本地历史提交编号和上述 `.appvanta/` 忽略的设备证据并未随快照公开，托管 CI 与真机/OEM 验收仍未完成。对应 [GitHub Actions 运行](https://github.com/williamwue/appvanta/actions/runs/36435782854) 已以失败结束：Windows/macOS 遇到路径别名运行时/测试问题，Ubuntu 的 release-package `doctor` 因 ADB 不可用报 `spawn adb ENOENT`，Android job 缺少 `sdkmanager`。修复仅在本地准备，托管重跑尚无结果，不能计为托管通过。2026-09-26 的 77 项（core 31、Android 28、脚本 18）和 `.appvanta/wrapup-build.log`、`.appvanta/wrapup-tests.log` 是当时的历史快照。
 
 ## P0：下一轮先处理
 
@@ -78,7 +78,7 @@
 
 ## P3：CI 与开源发布
 
-- [ ] 推送源码分支并完成公开项目主页及安全发布准备；公开空仓库和[私密漏洞报告入口](https://github.com/williamwue/appvanta/security/advisories/new)已建立，不代表源码已发布。
+- [x] 发布实验性源码快照并完成公开项目主页及安全发布准备；公开 `main` 初始提交 [`93749a0`](https://github.com/williamwue/appvanta/commit/93749a0cb87937149376aaac16adf8d199660acb) 的树与本地集成修订 `fda6c8b` 一致，[私密漏洞报告入口](https://github.com/williamwue/appvanta/security/advisories/new)已启用；这不等于完整产品验收或 npm 发布。
 - [ ] Windows/Linux/macOS 托管构建、测试、干净安装与子进程行为验收。
 - [ ] 托管 Android Emulator 验收及失败证据上传；CI/Jenkins 文档与实际执行对齐。
 - [ ] 各系统从空目录安装 tarball，验证 CLI/doctor/MCP，复验升级、迁移、卸载。
