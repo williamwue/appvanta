@@ -1,0 +1,16 @@
+node_modules/
+dist/
+build/
+.venv/
+__pycache__/
+*.pyc
+.env
+.env.*
+!.env.example
+.appvanta/runs/
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+.appvanta/
+test-apps/*.apk

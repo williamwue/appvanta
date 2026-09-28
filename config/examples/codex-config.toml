@@ -1,0 +1,7 @@
+# Replace both paths with absolute paths on this machine.
+[mcp_servers.appvanta]
+command = "node"
+args = ["G:/Projects/appvanta/packages/mcp/dist/index.js"]
+
+[mcp_servers.appvanta.env]
+APPVANTA_PROJECT_ROOT = "G:/Projects/your-android-project"

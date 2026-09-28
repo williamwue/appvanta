@@ -1,0 +1,17 @@
+{
+  "version": 1,
+  "name": "Markor hosted emulator smoke",
+  "description": "Launch the pinned Markor APK, verify its process is running, and preserve the initial UI evidence without depending on onboarding state.",
+  "applications": ["net.gsantner.markor"],
+  "steps": [
+    {
+      "description": "Launch Markor and wait for its process",
+      "launchPackage": "net.gsantner.markor",
+      "action": {
+        "kind": "wait",
+        "condition": { "kind": "app-running", "packageName": "net.gsantner.markor" },
+        "timeoutMs": 10000
+      }
+    }
+  ]
+}

@@ -1,0 +1,11 @@
+{
+  "mcpServers": {
+    "appvanta": {
+      "command": "node",
+      "args": ["G:/Projects/appvanta/packages/mcp/dist/index.js"],
+      "env": {
+        "APPVANTA_PROJECT_ROOT": "G:/Projects/your-android-project"
+      }
+    }
+  }
+}

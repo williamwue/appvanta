@@ -1,0 +1,27 @@
+{
+  "name": "appvanta",
+  "private": true,
+  "license": "Apache-2.0",
+  "scripts": {
+    "build": "npm run build --workspace @appvanta/core && npm run build --workspace @appvanta/android && npm run build --workspace @appvanta/cli && npm run build --workspace @appvanta/mcp",
+    "check:source-policy": "node scripts/check-source-policy.mjs",
+    "check:history-policy": "node scripts/check-history-policy.mjs",
+    "test": "npm run check:source-policy && npm test --workspace @appvanta/core && npm test --workspace @appvanta/android && node --test scripts/test/*.test.mjs",
+    "stage:evidence": "node scripts/stage-evidence.mjs",
+    "verify:markor": "npm run build --workspace @appvanta/core && npm run build --workspace @appvanta/android && node scripts/verify-markor.mjs",
+    "verify:workers": "node scripts/verify-independent-workers.mjs",
+    "verify:gestures": "node scripts/verify-gestures.mjs",
+    "verify:android-actions": "node scripts/verify-android-actions.mjs",
+    "verify:manual-recording": "node scripts/verify-manual-recording.mjs",
+    "verify:release-packages": "node scripts/verify-release-packages.mjs",
+    "release:prepare": "node scripts/prepare-release.mjs"
+  },
+  "workspaces": [
+    "packages/*"
+  ],
+  "devDependencies": {
+    "@types/node": "^22.20.2",
+    "@types/pngjs": "^6.0.5",
+    "typescript": "^5.9.2"
+  }
+}

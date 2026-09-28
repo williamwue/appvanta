@@ -1,0 +1,19 @@
+{
+  "name": "@appvanta/android",
+  "version": "0.1.0",
+  "private": true,
+  "license": "Apache-2.0",
+  "type": "module",
+  "engines": { "node": ">=20" },
+  "files": ["dist"],
+  "exports": { ".": { "types": "./dist/index.d.ts", "import": "./dist/index.js" } },
+  "dependencies": {
+    "@appvanta/core": "0.1.0"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json && node ../../scripts/copy-android-runtime.mjs",
+    "test": "node --test test/*.test.mjs"
+  },
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts"
+}

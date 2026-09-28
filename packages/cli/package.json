@@ -1,0 +1,25 @@
+{
+  "name": "@appvanta/cli",
+  "version": "0.1.0",
+  "private": true,
+  "license": "Apache-2.0",
+  "type": "module",
+  "engines": {
+    "node": ">=20"
+  },
+  "files": [
+    "dist"
+  ],
+  "bin": {
+    "appvanta": "./dist/index.js"
+  },
+  "dependencies": {
+    "@appvanta/android": "0.1.0",
+    "@appvanta/core": "0.1.0",
+    "yaml": "2.8.3"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "appvanta": "node dist/index.js"
+  }
+}

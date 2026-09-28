@@ -1,0 +1,15 @@
+{
+  "name": "Markor observation flow",
+  "description": "Launch Markor and verify its main editor controls.",
+  "steps": [
+    {
+      "description": "Wait for Markor process",
+      "action": { "kind": "wait", "condition": { "kind": "app-running", "packageName": "net.gsantner.markor" }, "timeoutMs": 5000 },
+      "assertText": "Markor"
+    },
+    {
+      "description": "Verify preview control is exposed",
+      "assertTarget": { "kind": "accessibility-label", "value": "Search" }
+    }
+  ]
+}

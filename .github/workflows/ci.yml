@@ -1,0 +1,102 @@
+name: AppVanta CI
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  portable-build:
+    name: Build and test (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - run: npm ci
+      - run: npm run build
+      - run: npm test
+      - run: npm run verify:release-packages
+      - name: Test network recovery helpers
+        working-directory: scripts
+        run: python -m unittest test_proxy_recovery.py test_network_finalization.py
+      - name: Stage run evidence only
+        if: always()
+        run: node scripts/stage-evidence.mjs .appvanta/runs .appvanta/ci-evidence
+      - name: Upload AppVanta evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: appvanta-evidence-${{ matrix.os }}
+          path: .appvanta/ci-evidence/
+          include-hidden-files: true
+          if-no-files-found: ignore
+
+  android-emulator:
+    name: Android emulator smoke
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - run: npm ci
+      - run: npm run build
+      - name: Install Android emulator image
+        shell: bash
+        run: |
+          yes | sdkmanager --licenses >/dev/null || true
+          sdkmanager "platform-tools" "emulator" "platforms;android-35" "system-images;android-35;google_apis;x86_64"
+          echo no | avdmanager create avd --force --name appvanta-ci --package "system-images;android-35;google_apis;x86_64" --device pixel_6
+      - name: Start emulator
+        shell: bash
+        run: |
+          nohup "$ANDROID_HOME/emulator/emulator" -avd appvanta-ci -no-window -no-audio -no-boot-anim -no-snapshot -gpu swiftshader_indirect > emulator.log 2>&1 &
+          adb wait-for-device
+          for attempt in $(seq 1 180); do
+            if [ "$(adb shell getprop sys.boot_completed 2>/dev/null | tr -d '\r')" = "1" ]; then break; fi
+            if [ "$attempt" = "180" ]; then echo "Emulator boot timed out"; exit 1; fi
+            sleep 2
+          done
+          adb shell settings put global window_animation_scale 0
+          adb shell settings put global transition_animation_scale 0
+          adb shell settings put global animator_duration_scale 0
+          adb devices -l
+      - name: Download pinned Markor APK
+        shell: bash
+        run: |
+          mkdir -p test-apps
+          curl --fail --location --retry 3 --output test-apps/markor.apk "https://github.com/gsantner/markor/releases/download/v2.16.1/net.gsantner.markor-v163-2.16.1-flavorDefault-release.apk"
+          echo "e88cdcced7aa3dca25e6b9c7a9bdcfad3e3988ee545be951f42bf9441b5e46bf  test-apps/markor.apk" | sha256sum --check
+      - name: Run Android smoke Flow
+        shell: bash
+        run: |
+          node packages/cli/dist/index.js install emulator-5554 test-apps/markor.apk
+          node packages/cli/dist/index.js run-flow emulator-5554 docs/examples/markor-ci-flow.json
+      - name: Stage device evidence
+        if: always()
+        run: node scripts/stage-evidence.mjs .appvanta/runs .appvanta/ci-evidence
+      - name: Upload Android evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: appvanta-android-emulator-evidence
+          path: |
+            .appvanta/ci-evidence/
+            emulator.log
+          include-hidden-files: true
+          if-no-files-found: warn

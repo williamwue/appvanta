@@ -1,0 +1,3 @@
+<resources>
+  <string name="gesture_service_description">Allows explicit AppVanta test commands to perform gestures and record allowlisted manual interactions.</string>
+</resources>

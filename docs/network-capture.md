@@ -1,0 +1,149 @@
+# Android 请求级采集
+
+独立实现的 mitmproxy addon 通过公开的 response/error hooks 保存请求证据。
+参考协议文档：https://docs.mitmproxy.org/stable/addons/examples/
+
+## 安装和运行（Windows / Python 3.11）
+
+```powershell
+python -m venv .appvanta/proxy-venv
+.appvanta/proxy-venv/Scripts/python.exe -m pip install -r scripts/network-requirements.txt
+python scripts/capture-network.py --mitmdump .appvanta/proxy-venv/Scripts/mitmdump.exe --device emulator-5554 --output .appvanta/runs/network-example --seconds 30
+```
+
+脚本启动本地代理后配置模拟器全局代理，结束（包括异常）时恢复原值。
+输出目录必须不存在，防止混合多次运行证据。默认设备访问宿主地址是
+`10.0.2.2`；其他设备可用 `--device-host` 显式指定合适的地址与转发。
+
+产物：`requests.jsonl`、`summary.json`、`proxy.log`。
+请求证据包括方法、去掉查询参数的 URL、状态码、时长、响应字节数及错误；
+不保存请求头、Cookie 或正文。代理诊断日志可能包含原始连接信息。
+CA 私钥保存在独立的 `.appvanta/network-ca`，不要导出该目录。
+
+## 验证
+
+```powershell
+python scripts/verify-network.py emulator-5554
+```
+
+验证器启动本地 HTTP 服务，通过 Android 浏览器、代理和显式本地 URL 映射
+访问该服务，断言请求证据中的 HTTP 200，并检查原代理配置得到恢复。
+浏览器应已完成首次启动引导。退出码非零代表验收失败。
+
+## 当前边界
+
+- 已实测模拟器 HTTP 请求与成功响应、连接失败记录、代理恢复。
+- HTTPS 已在 API 37 模拟器 Chrome 上通过双向链路 TLS 实测；应用仍需自行信任用户 CA。
+- 不支持绕过证书固定，不保证忽略系统代理的应用流量可见。
+- CLI Flow、MCP 同步/异步 Flow 共用请求级会话；支持正常结束、断言失败及协作取消后的代理恢复。
+- 这是请求观察，不是流量统计 `network` 命令的替代实现。
+
+## HTTPS 测试 CA 与验证
+
+使用已有代理环境准备公钥证书（不会复制私钥）：
+
+```powershell
+.appvanta/proxy-venv/Scripts/python.exe scripts/prepare-network-ca.py --device emulator-5554
+```
+
+API 37 实测安装路径：Settings → Security & privacy → More security & privacy →
+Encryption & credentials → Install a certificate → CA certificate → Install anyway →
+Downloads → appvanta-test-ca.crt。安装后在 Trusted credentials 的 User 页检查
+mitmproxy，并通过下面的请求验证信任链。复制证书本身不代表已安装。
+
+```powershell
+.appvanta/proxy-venv/Scripts/python.exe scripts/verify-network.py emulator-5554 --https
+.appvanta/proxy-venv/Scripts/python.exe scripts/verify-network.py emulator-5554 --https --reject-upstream
+```
+
+第一条启动本地 HTTPS 服务：浏览器通过代理建立 TLS，上游也使用 TLS 并验证
+测试服务证书。断言 `statusCode=200`、`clientTls=true`、`serverTls=true`。
+第二条故意不向代理提供上游测试 CA，要求出现 certificate verify failed，不能出现
+200。两条均检查原代理配置恢复，成功后写出 `verification.json`。
+测试使用 URL 映射，日志中的 URL 是映射后的本地服务地址；未证明任意 App 支持代理。
+
+实测证据（2026-09-16）：
+
+- `.appvanta/runs/network-1789524700332953800/`：HTTPS 200、客户端/服务端 TLS。
+- `.appvanta/runs/network-1789524752729993200/`：拒绝未信任上游证书、恢复代理。
+- 测试 CA SHA-256：`25ddce5f03cff3899409a617d1b12d91309ae8c2d9fd46efad2c602787072452`。
+
+测试 CA 保留在此模拟器的用户凭据中；不需要时在 Trusted credentials → User →
+mitmproxy 中删除这张证书。不要使用 Clear credentials 清空其他证书。
+代理配置已恢复为采集前的值，CA 私钥仍仅存放在本机 `.appvanta/network-ca`。
+
+## Flow 自动管理采集
+
+在 Flow JSON 中加入 `network` 即可启用；没有该配置时不启动代理：
+
+```json
+{
+  "name": "HTTPS page check",
+  "network": {
+    "python": ".appvanta/proxy-venv/Scripts/python.exe",
+    "mitmdump": ".appvanta/proxy-venv/Scripts/mitmdump.exe"
+  },
+  "steps": [
+    {"description": "Open test page", "openUrl": "https://example.com", "assertText": "Example Domain"}
+  ]
+}
+```
+
+运行 `node packages/cli/dist/index.js run-flow emulator-5554 flow.json`。
+上述地址为用法示例，自动验证使用本地测试服务，避免依赖公网。
+可选配置 `port` 指定代理端口，`mapRemote` 提供测试 URL 映射，
+`upstreamCa` 为私有 TLS 服务提供受信任 CA；不会关闭证书校验。
+
+会话就绪后执行动作，步骤结束或断言失败都会结束会话并验证代理恢复。
+请求、代理日志和 summary 位于同一运行目录的 `network/`；截图/UI 位于
+`artifacts/`。`report.md` 链接网络产物，`run.json`、`report.json` 记录最终状态。
+断言允许最多约 5 秒的 UI 重新观察，单次 ADB 命令仍受自身超时限制。
+流程失败、代理启动失败、代理恢复失败均返回非零退出码。
+
+```powershell
+.appvanta/proxy-venv/Scripts/python.exe scripts/verify-network.py emulator-5554 --https --flow
+.appvanta/proxy-venv/Scripts/python.exe scripts/verify-network.py emulator-5554 --https --flow --fail-flow
+.appvanta/proxy-venv/Scripts/python.exe scripts/verify-network.py emulator-5554 --flow --fail-network
+```
+
+三个验收分别验证成功、故意错误的 UI 断言、端口占用时禁止执行动作。
+验证脚本返回通过表示符合预期；故意失败场景中的 Flow 本身必须返回失败。
+当前请在同一设备上串行使用代理会话。CLI/MCP 网络 worker 独立启动，通过私有 stdin 管道检测宿主退出，恢复原代理并终止代理进程；采集日志直接写入文件，宿主退出后仍可检查。
+设置代理前写入版本 2 `network/recovery.json`，记录设备、原值、会话值、进程 ID、输出目录、代理程序绝对路径和端口；清理结果写入 `network/summary.json`。
+`recover-flow` 先写入停止请求并等待独立 worker 自行清理；worker 未能产生已验证 summary 时，才读取绑定记录接管。接管仅在当前代理仍为本会话值或原值时继续，并在终止本机进程前核对 PID 命令行包含预期脚本/代理路径、输出目录和端口。外部代理值、无法验证的 PID 或读取失败都会保留设备锁。自动测试已覆盖正常 summary 的幂等处理；整个进程树终止后的真实模拟器接管仍待验收。
+设备锁不因宿主死亡自动解除，其他夹具及设备状态仍需检查。会话硬上限为一小时。
+
+恢复代理时，worker 最多用 60 秒重试 ADB 连接/命令错误，每次结果写入 `network/restoration.jsonl`。当前值已是原值时直接完成；仍是本会话值时才写回原值；其他值视为冲突，停止恢复并返回失败，避免覆盖外部修改。恢复失败的 summary 包含 `restoreError`，后续仍需人工检查或持久恢复机制。
+
+退出总结同时包含 `proxyStopped`、`forcedTermination` 和 `cleanupErrors`。代理停止超时后尝试强制结束；强制结束即使成功也标记本次采集失败，因为日志可能不完整。请求日志按行检查，损坏记录的行号写入总结，原始字节不修改；不能因最后一行写入中断而丢失代理恢复结果。磁盘不可写时无法保证总结落盘。
+
+`python scripts/test_network_finalization.py` 覆盖日志损坏、缺失、停止超时、停止异常及正常退出。真实采集会话注入损坏 JSONL 后，CLI 调用返回错误、summary 为 failed、代理已恢复且进程已退出：`network-owner-exit-1789539495272/verification.json`，同次回归也覆盖正常停止、宿主终止及外部代理冲突。
+
+`python scripts/test_proxy_recovery.py` 覆盖模拟断线重连、期限耗尽、外部值冲突和已恢复状态。真实模拟器的强制退出、正常停止、外部修改拒绝覆盖三路径通过：`network-owner-exit-1789539353836/verification.json`。冲突测试最后独立恢复测试前的代理。真实设备断线重连尚未验收，模拟测试不能替代它。
+
+## 实际模拟器断线验收
+
+```powershell
+node scripts/verify-network-reconnect.mjs emulator-5554
+```
+
+该命令会重启指定模拟器，仅接受 `emulator-<port>` 序列号。先保存原代理，启动采集并确认代理生效，再重启模拟器并触发清理；要求至少一次真实 ADB 错误、重连后原值校验及代理进程退出，保存逐次尝试和最终结果。
+
+2026-09-16 API 37 模拟器通过：`network-reconnect-1789539588722/verification.json`。前 12 次 ADB/系统服务不可用，第 13 次恢复成功；原代理为 `:0`，端口已释放。该项覆盖采集 worker 仍在运行、模拟器在 60 秒恢复窗口内重连的情况，不证明物理设备拔插、超过期限离线、主机重启或整个进程树被终止后的持久恢复。
+
+```powershell
+node scripts/verify-network-owner-exit.mjs emulator-5554
+node scripts/verify-protocol-cancel.mjs emulator-5554
+```
+
+2026-09-16 Windows/API 37 模拟器验证：`network-owner-exit-1789539169298` 中强制终止宿主后状态为 `interrupted`，代理原值恢复，代理进程退出；随后复用同一端口启动并正常停止成功。MCP 协作取消回归 `protocol-cancel-1789539191662` 通过。该证据不代表设备断线、整个进程树终止或主机重启恢复完成；新增接管实现也不能替代这些待执行的真实验收。
+
+MCP 同步 Flow 使用同一验收器，加 `--mcp`：
+
+```powershell
+.appvanta/proxy-venv/Scripts/python.exe scripts/verify-network.py emulator-5554 --https --flow --mcp
+.appvanta/proxy-venv/Scripts/python.exe scripts/verify-network.py emulator-5554 --https --flow --mcp --fail-flow
+.appvanta/proxy-venv/Scripts/python.exe scripts/verify-network.py emulator-5554 --flow --mcp --fail-network
+```
+
+2026-09-16 三项均通过，运行目录分别为 `2026-09-16T03-17-33-021Z-emulator-5554-6d93fb19`、`2026-09-16T03-18-12-772Z-emulator-5554-9c958e26`、`2026-09-16T03-18-32-203Z-emulator-5554-e2b01584`。均保存代理恢复结果。客户端收到 Flow `status=failed` 表示业务失败，MCP 服务进程本身正常退出不代表 Flow 成功。

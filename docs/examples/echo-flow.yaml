@@ -1,0 +1,9 @@
+version: 1
+name: YAML echo example
+description: Records an operator-visible note and returns to the previous screen.
+steps:
+  - description: Record test context
+    echo: "The following Back action is intentional."
+  - description: Press Back
+    action:
+      kind: back
