@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { execFile, spawn } from 'node:child_process';
 import { once } from 'node:events';
-import { mkdir, mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, rename, rm, stat, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { promisify } from 'node:util';
@@ -47,6 +47,23 @@ const cleanupWorkspace = async path => {
       lastError = error;
       if (!error || !['EBUSY', 'EPERM', 'EACCES', 'ENOTEMPTY'].includes(error.code)) throw error;
       await new Promise(resolveRetry => setTimeout(resolveRetry, 500));
+    }
+  }
+  // Windows can keep a transient antivirus/indexer handle after all child
+  // processes have closed. Detach the workspace so that this environmental
+  // lock does not turn an otherwise successful verification into a failure.
+  // A failed rename remains a real cleanup error and is reported below.
+  if (process.platform === 'win32') {
+    const pending = `${path}.pending-${process.pid}-${Date.now()}`;
+    try {
+      await rename(path, pending);
+      try { await rm(pending, { recursive: true, force: true, maxRetries: 3, retryDelay: 250 }); }
+      catch (error) {
+        if (!error || !['EBUSY', 'EPERM', 'EACCES', 'ENOTEMPTY'].includes(error.code)) throw error;
+      }
+      return;
+    } catch (error) {
+      lastError = error;
     }
   }
   throw lastError ?? new Error(`Timed out cleaning verifier workspace: ${path}`);
