@@ -75,6 +75,87 @@ test('queued task ownership transfers exactly once to an independent worker sess
   } finally { await rm(root, { recursive: true, force: true }); }
 });
 
+test('queued transfer serializes against a stale save and preserves the newer owner', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'appvanta-task-persist-race-'));
+  const ownerSession = '33333333-3333-4333-8333-333333333333', workerSession = '44444444-4444-4444-8444-444444444444';
+  try {
+    const owner = new TaskStore(root, ownerSession), task = await owner.create('device', flow);
+    const transfer = owner.transferQueued(task, process.pid, workerSession);
+    const stale = { ...task, status: 'running' };
+    const save = owner.save(stale);
+    const [transferred, saved] = await Promise.allSettled([transfer, save]);
+    assert.equal(transferred.status, 'fulfilled');
+    assert.equal(saved.status, 'rejected');
+    assert.match(String(saved.reason), /owner changed|another worker/i);
+    const persisted = JSON.parse(await readFile(join(root, task.id, 'task.json')));
+    assert.equal(persisted.owner.session, workerSession);
+    assert.equal(persisted.status, 'queued');
+  } finally { await rm(root, { recursive: true, force: true }); }
+});
+
+test('queued transfer preserves metadata persisted after the caller snapshot', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'appvanta-task-transfer-metadata-'));
+  const workerSession = '55555555-5555-4555-8555-555555555555';
+  try {
+    const owner = new TaskStore(root), task = await owner.create('device', flow), stale = { ...task };
+    task.runDirectory = 'latest-run';
+    await owner.save(task);
+    await assert.rejects(owner.transferQueued(stale, process.pid, workerSession), /revision changed/i);
+    const transferred = await owner.transferQueued(await owner.get(task.id), process.pid, workerSession);
+    assert.equal(transferred.runDirectory, 'latest-run');
+    assert.equal(JSON.parse(await readFile(join(root, task.id, 'task.json'))).runDirectory, 'latest-run');
+  } finally { await rm(root, { recursive: true, force: true }); }
+});
+
+test('stale save rejects after another writer advances task metadata', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'appvanta-task-save-revision-'));
+  const session = '66666666-6666-4666-8666-666666666666';
+  try {
+    const writer = new TaskStore(root, session), otherWriter = new TaskStore(root, session);
+    const task = await writer.create('device', flow), stale = { ...task };
+    task.runDirectory = 'newest-run'; await writer.save(task);
+    stale.runDirectory = 'stale-run';
+    await assert.rejects(otherWriter.save(stale), /revision changed/i);
+    assert.equal(JSON.parse(await readFile(join(root, task.id, 'task.json'))).runDirectory, 'newest-run');
+  } finally { await rm(root, { recursive: true, force: true }); }
+});
+
+test('task publication rejects tampered owner identity and revision records', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'appvanta-task-persist-tamper-'));
+  const session = '77777777-7777-4777-8777-777777777777', workerSession = '88888888-8888-4888-8888-888888888888';
+  try {
+    const owner = new TaskStore(root, session), task = await owner.create('device', flow);
+    const path = join(root, task.id, 'task.json');
+    const ownerTampered = JSON.parse(await readFile(path, 'utf8'));
+    ownerTampered.owner.pid = process.pid + 1;
+    await writeFile(path, JSON.stringify(ownerTampered));
+    await assert.rejects(owner.save(task), /owner changed/i);
+    const restored = { ...ownerTampered, owner: { ...ownerTampered.owner, pid: process.pid, host: ownerTampered.owner.host } };
+    await writeFile(path, JSON.stringify(restored));
+    const transferred = await owner.transferQueued(task, process.pid, workerSession);
+    const transferredPath = join(root, task.id, 'task.json');
+    const revisionTampered = JSON.parse(await readFile(transferredPath, 'utf8'));
+    revisionTampered.revision = 'bad';
+    await writeFile(transferredPath, JSON.stringify(revisionTampered));
+    await assert.rejects(owner.failTransferredStartup(task.id, process.pid, workerSession, 'startup'), /revision/i);
+    assert.equal(JSON.parse(await readFile(transferredPath, 'utf8')).revision, 'bad');
+    assert.equal(transferred.owner.session, workerSession);
+  } finally { await rm(root, { recursive: true, force: true }); }
+});
+
+test('task revision overflow fails before publication', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'appvanta-task-revision-overflow-'));
+  try {
+    const owner = new TaskStore(root), task = await owner.create('device', flow);
+    const path = join(root, task.id, 'task.json');
+    const tampered = JSON.parse(await readFile(path, 'utf8'));
+    tampered.revision = Number.MAX_SAFE_INTEGER;
+    await writeFile(path, JSON.stringify(tampered));
+    await assert.rejects(owner.save({ ...task, revision: Number.MAX_SAFE_INTEGER }), /overflow/i);
+    assert.equal(JSON.parse(await readFile(path, 'utf8')).revision, Number.MAX_SAFE_INTEGER);
+  } finally { await rm(root, { recursive: true, force: true }); }
+});
+
 test('reserved task publication is idempotent and fails closed on ambiguous or mismatched artifacts', async () => {
   const root = await mkdtemp(join(tmpdir(), 'appvanta-reserved-task-'));
   const reservation = { id: '11111111-1111-4111-8111-111111111111', digestSha256: 'a'.repeat(64) };

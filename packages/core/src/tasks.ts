@@ -15,6 +15,7 @@ export interface TaskRecord {
   readonly flow: FlowDefinition;
   readonly owner: { readonly pid: number; readonly host: string; readonly session: string };
   readonly startedAt: string;
+  revision?: number;
   status: TaskStatus;
   finishedAt?: string;
   runDirectory?: string;
@@ -27,6 +28,28 @@ export const terminalTask = (status: TaskStatus) => ['passed', 'failed', 'cancel
 const uuidPattern = /^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/;
 const isCode = (error: unknown, code: string) => !!error && typeof error === 'object' && 'code' in error && error.code === code;
 const createFlowDigest = (flow: FlowDefinition) => createHash('sha256').update(JSON.stringify(flow)).digest('hex');
+const taskRevision = (task: TaskRecord) => {
+  const revision = task.revision ?? 0;
+  if (!Number.isSafeInteger(revision) || revision < 0) throw new Error('Invalid task revision');
+  return revision;
+};
+const nextTaskRevision = (revision: number) => {
+  if (revision >= Number.MAX_SAFE_INTEGER) throw new Error('Task revision overflow');
+  return revision + 1;
+};
+const renameWithRetry = async (from: string, to: string) => {
+  for (let attempt = 0; ; attempt++) {
+    try { return await rename(from, to); }
+    catch (error) {
+      if (attempt >= 39 || !isCode(error, 'EPERM') && !isCode(error, 'EACCES') && !isCode(error, 'EBUSY')) throw error;
+      await delay(50);
+    }
+  }
+};
+const removeTemporary = async (path: string) => {
+  try { await unlink(path); }
+  catch (error) { if (!isCode(error, 'ENOENT')) { /* preserve the publication error */ } }
+};
 function sameReservedTask(task: TaskRecord, id: string, deviceId: string, flow: FlowDefinition,
   options: { completionWebhook?: string }) {
   return task.version === 1 && task.id === id && task.deviceId === deviceId && task.status === 'queued' &&
@@ -39,14 +62,22 @@ function sameReservedTask(task: TaskRecord, id: string, deviceId: string, flow: 
 /** A single owner writes each task; other processes can query or request cancellation. */
 export class TaskStore {
   private readonly writes = new Map<string, Promise<void>>();
+  private readonly lastWrittenRevision = new WeakMap<object, number>();
   constructor(readonly directory: string, private readonly session: string = randomUUID()) { if (!uuidPattern.test(session)) throw new Error('Invalid task worker session'); }
   get workerSession(): string { return this.session; }
+  private enqueue<T>(id: string, operation: () => Promise<T>): Promise<T> {
+    const previous = this.writes.get(id) ?? Promise.resolve();
+    const current = previous.then(operation, operation);
+    const settled = current.then(() => undefined, () => undefined);
+    this.writes.set(id, settled);
+    return current.finally(() => { if (this.writes.get(id) === settled) this.writes.delete(id); });
+  }
   private path(id: string) {
     if (!/^task-[a-f0-9-]{36}$/.test(id)) throw new Error('Invalid task id');
     return join(this.directory, id);
   }
   async create(deviceId: string, flow: FlowDefinition, options: { completionWebhook?: string } = {}): Promise<TaskRecord> {
-    const task: TaskRecord = { version: 1, id: `task-${randomUUID()}`, deviceId, flow, owner: { pid: process.pid, host: hostname(), session: this.session }, startedAt: new Date().toISOString(), status: 'queued', ...(options.completionWebhook ? { completionWebhook: options.completionWebhook } : {}) };
+    const task: TaskRecord = { version: 1, id: `task-${randomUUID()}`, deviceId, flow, owner: { pid: process.pid, host: hostname(), session: this.session }, startedAt: new Date().toISOString(), revision: 0, status: 'queued', ...(options.completionWebhook ? { completionWebhook: options.completionWebhook } : {}) };
     await mkdir(this.directory, { recursive: true });
     await mkdir(this.path(task.id));
     await this.save(task);
@@ -125,7 +156,7 @@ export class TaskStore {
     }
     const task: TaskRecord = { version: 1, id, deviceId, flow: parsedFlow,
       owner: { pid: process.pid, host: hostname(), session: this.session }, startedAt: new Date().toISOString(),
-      status: 'queued', ...(options.completionWebhook ? { completionWebhook: options.completionWebhook } : {}) };
+      revision: 0, status: 'queued', ...(options.completionWebhook ? { completionWebhook: options.completionWebhook } : {}) };
     try {
       // The task file itself is the cross-process publication point. wx prevents a
       // concurrent publisher from replacing a valid task or stealing its owner.
@@ -140,49 +171,68 @@ export class TaskStore {
   }
   async save(task: TaskRecord): Promise<void> {
     if (task.owner.session !== this.session || task.owner.pid !== process.pid) throw new Error('Task is owned by another worker');
-    const snapshot = JSON.stringify(task, null, 2);
-    const previous = this.writes.get(task.id) ?? Promise.resolve();
-    const current = previous.then(async () => {
+    const expectedRevision = taskRevision(task);
+    let writeRevision = expectedRevision;
+    await this.enqueue(task.id, async () => {
       const root = this.path(task.id);
       try {
         const existing = JSON.parse(await readFile(join(root, 'task.json'), 'utf8')) as TaskRecord;
-        if (existing.owner.session !== this.session) throw new Error('Task owner changed');
+        if (!existing.owner || existing.owner.session !== this.session || existing.owner.pid !== process.pid || existing.owner.host !== hostname()) throw new Error('Task owner changed');
+        const actualRevision = taskRevision(existing);
+        const sameObjectContinuation = this.lastWrittenRevision.get(task) === actualRevision;
+        if (actualRevision !== expectedRevision && !sameObjectContinuation) throw new Error('Task revision changed');
+        writeRevision = actualRevision;
         if (terminalTask(existing.status)) {
-          if (JSON.stringify(existing, null, 2) !== snapshot) throw new Error('Terminal task cannot be rewritten');
+          if (JSON.stringify(existing, null, 2) !== JSON.stringify(task, null, 2)) throw new Error('Terminal task cannot be rewritten');
           return;
         }
       } catch (error) {
         if (!error || typeof error !== 'object' || !('code' in error) || error.code !== 'ENOENT') throw error;
       }
+      const next = { ...task, revision: nextTaskRevision(writeRevision) };
+      const snapshot = JSON.stringify(next, null, 2);
       const temporary = join(root, `state-${randomUUID()}.tmp`);
       await writeFile(temporary, snapshot, { flag: 'wx' });
-      await rename(temporary, join(root, 'task.json'));
+      try { await renameWithRetry(temporary, join(root, 'task.json')); }
+      catch (error) { await removeTemporary(temporary); throw error; }
+      (task as { revision?: number }).revision = next.revision;
+      this.lastWrittenRevision.set(task, next.revision);
     });
-    this.writes.set(task.id, current);
-    try { await current; } finally { if (this.writes.get(task.id) === current) this.writes.delete(task.id); }
   }
   async transferQueued(task: TaskRecord, workerPid: number, workerSession: string): Promise<TaskRecord> {
     if (task.owner.session !== this.session || task.owner.pid !== process.pid) throw new Error('Task is owned by another worker');
     if (task.status !== 'queued' || !Number.isInteger(workerPid) || workerPid < 1 || !uuidPattern.test(workerSession)) throw new Error('Invalid queued task transfer');
-    const path = join(this.path(task.id), 'task.json'), existing = JSON.parse(await readFile(path, 'utf8')) as TaskRecord;
-    if (existing.status !== 'queued' || existing.owner.session !== this.session || existing.owner.pid !== process.pid) throw new Error('Queued task changed before transfer');
-    const transferred: TaskRecord = { ...task, owner: { pid: workerPid, host: hostname(), session: workerSession } };
-    const temporary = join(this.path(task.id), `transfer-${randomUUID()}.tmp`);
-    await writeFile(temporary, JSON.stringify(transferred, null, 2), { flag: 'wx' }); await rename(temporary, path);
-    return transferred;
+    const expectedRevision = task.revision ?? 0;
+    if (!Number.isSafeInteger(expectedRevision) || expectedRevision < 0) throw new Error('Invalid task revision');
+    return this.enqueue(task.id, async () => {
+      const path = join(this.path(task.id), 'task.json'), existing = JSON.parse(await readFile(path, 'utf8')) as TaskRecord;
+      if (existing.status !== 'queued' || !existing.owner || existing.owner.session !== this.session || existing.owner.pid !== process.pid || existing.owner.host !== hostname()) throw new Error('Queued task changed before transfer');
+      const actualRevision = taskRevision(existing);
+      if (actualRevision !== expectedRevision) throw new Error('Task revision changed before transfer');
+      const transferred: TaskRecord = { ...existing, revision: nextTaskRevision(actualRevision), owner: { pid: workerPid, host: hostname(), session: workerSession } };
+      const temporary = join(this.path(task.id), `transfer-${randomUUID()}.tmp`);
+      await writeFile(temporary, JSON.stringify(transferred, null, 2), { flag: 'wx' });
+      try { await renameWithRetry(temporary, path); }
+      catch (error) { await removeTemporary(temporary); throw error; }
+      return transferred;
+    });
   }
   async failTransferredStartup(id: string, workerPid: number, workerSession: string, error: string): Promise<TaskRecord> {
     if (!Number.isInteger(workerPid) || workerPid < 1 || !uuidPattern.test(workerSession) || !error) throw new Error('Invalid failed task transfer');
-    const path = join(this.path(id), 'task.json'), existing = JSON.parse(await readFile(path, 'utf8')) as TaskRecord;
-    if (existing.status !== 'queued' || existing.owner.pid !== workerPid || existing.owner.session !== workerSession) throw new Error('Transferred task changed before startup failure');
-    const failed: TaskRecord = { ...existing, status: 'failed', finishedAt: new Date().toISOString(), error };
-    const temporary = join(this.path(id), `startup-failure-${randomUUID()}.tmp`);
-    await writeFile(temporary, JSON.stringify(failed, null, 2), { flag: 'wx' }); await rename(temporary, path);
-    return failed;
+    return this.enqueue(id, async () => {
+      const path = join(this.path(id), 'task.json'), existing = JSON.parse(await readFile(path, 'utf8')) as TaskRecord;
+      if (existing.status !== 'queued' || !existing.owner || existing.owner.pid !== workerPid || existing.owner.session !== workerSession || existing.owner.host !== hostname()) throw new Error('Transferred task changed before startup failure');
+      const failed: TaskRecord = { ...existing, revision: nextTaskRevision(taskRevision(existing)), status: 'failed', finishedAt: new Date().toISOString(), error };
+      const temporary = join(this.path(id), `startup-failure-${randomUUID()}.tmp`);
+      await writeFile(temporary, JSON.stringify(failed, null, 2), { flag: 'wx' });
+      try { await renameWithRetry(temporary, path); }
+      catch (renameError) { await removeTemporary(temporary); throw renameError; }
+      return failed;
+    });
   }
   async get(id: string): Promise<TaskRecord> {
     const value = JSON.parse(await readFile(join(this.path(id), 'task.json'), 'utf8')) as TaskRecord;
-    if (value.version !== 1 || value.id !== id || !value.owner || !Number.isInteger(value.owner.pid) || value.owner.pid < 1 || typeof value.owner.host !== 'string' || !['queued', 'running', 'pausing', 'paused', 'cancelling', 'passed', 'failed', 'cancelled', 'interrupted'].includes(value.status)) throw new Error('Invalid persisted task');
+    if (value.version !== 1 || value.id !== id || value.revision !== undefined && (!Number.isSafeInteger(value.revision) || value.revision < 0) || !value.owner || !Number.isInteger(value.owner.pid) || value.owner.pid < 1 || typeof value.owner.host !== 'string' || !['queued', 'running', 'pausing', 'paused', 'cancelling', 'passed', 'failed', 'cancelled', 'interrupted'].includes(value.status)) throw new Error('Invalid persisted task');
     if (!terminalTask(value.status) && value.owner.host === hostname()) {
       try { process.kill(value.owner.pid, 0); }
       catch (error) {
