@@ -2,7 +2,7 @@
 
 更新：2026-09-28。本文件汇总当前有界验收；阶段清单中的逐次记录作为带日期的历史证据，旧段落中的“待完成”应结合本文件及后续验收读取。最终目标仍是覆盖固定版本 Argent / ARTEMIS 的全部公开可验证功能，不因本轮收尾缩小范围。以下 39 项清单保持完整，1 项已完成、38 项仍待办。
 
-Current verification snapshot (2026-09-29): integration head 3174d2b; local release-package verifier passed for core/android/cli/mcp (doctor degraded because no local adb). Hosted run 36497994720 passed Windows, Linux, macOS, and Android Emulator. Windows cleanup emitted only a bounded EBUSY warning after verification; the matrix completed successfully. Public main is 64f5f92. Real-device/OEM acceptance remains unavailable; emulator evidence only.
+Current verification snapshot (2026-09-29): integration head 3174d2b; local release-package verifier passed for core/android/cli/mcp (doctor degraded because no local adb). Hosted run 36497994720 passed Windows, Linux, macOS, and Android Emulator. Windows cleanup emitted only a bounded EBUSY warning after verification; the matrix completed successfully. Public main is ff7e14c. Real-device/OEM acceptance remains unavailable; emulator evidence only.
 
 ## 本轮已完成的范围
 
