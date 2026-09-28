@@ -20,6 +20,7 @@ let verificationError;
 
 const stopMcpChild = async child => {
   if (!child) return;
+  const closed = once(child, 'close');
   const active = child.exitCode === null && child.signalCode === null;
   if (active) {
     try { child.stdin?.end(); } catch {}
@@ -31,9 +32,24 @@ const stopMcpChild = async child => {
       await Promise.race([once(child, 'exit'), new Promise(resolveExit => setTimeout(resolveExit, 1000))]);
     }
   }
+  await Promise.race([closed, new Promise(resolveClose => setTimeout(resolveClose, 5000))]);
   try { child.stdin?.destroy(); } catch {}
   try { child.stdout?.destroy(); } catch {}
   try { child.stderr?.destroy(); } catch {}
+};
+
+const cleanupWorkspace = async path => {
+  const deadline = Date.now() + 60000;
+  let lastError;
+  while (Date.now() < deadline) {
+    try { await rm(path, { recursive: true, force: true, maxRetries: 3, retryDelay: 250 }); return; }
+    catch (error) {
+      lastError = error;
+      if (!error || !['EBUSY', 'EPERM', 'EACCES', 'ENOTEMPTY'].includes(error.code)) throw error;
+      await new Promise(resolveRetry => setTimeout(resolveRetry, 500));
+    }
+  }
+  throw lastError ?? new Error(`Timed out cleaning verifier workspace: ${path}`);
 };
 
 try {
@@ -71,7 +87,8 @@ try {
   const messages = output.trim().split('\n').map(JSON.parse);
   assert(messages.find(message => message.id === 1)?.result?.serverInfo?.name);
   assert(messages.find(message => message.id === 2)?.result?.tools?.length > 10);
-  if (child.exitCode === null && child.signalCode === null) { const exited = once(child, 'exit'); child.kill(); await exited; }
+  await stopMcpChild(child);
+  mcpChild = undefined;
 
   assert((await stat(join(workspace, 'node_modules/@appvanta/android/dist/runtime/capture-network.py'))).isFile());
   const result = { status: 'passed', packages, doctor: doctorReport.verdict, tools: messages.find(message => message.id === 2).result.tools.length };
@@ -86,10 +103,8 @@ try {
   let cleanupError;
   try { await stopMcpChild(mcpChild); }
   catch (error) { cleanupError = error; }
-  try {
-    await new Promise(resolveCleanup => setTimeout(resolveCleanup, 250));
-    await rm(workspace, { recursive: true, force: true, maxRetries: 20, retryDelay: 500 });
-  } catch (error) { cleanupError ??= error; }
+  try { await cleanupWorkspace(workspace); }
+  catch (error) { cleanupError ??= error; }
   // Preserve the verification failure if cleanup also fails. A successful
   // verification still reports bounded cleanup failure to avoid hiding leaks.
   if (!verificationError && cleanupError) throw cleanupError;
