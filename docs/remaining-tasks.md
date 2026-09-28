@@ -2,7 +2,7 @@
 
 更新：2026-09-28。本文件汇总当前有界验收；阶段清单中的逐次记录作为带日期的历史证据，旧段落中的“待完成”应结合本文件及后续验收读取。最终目标仍是覆盖固定版本 Argent / ARTEMIS 的全部公开可验证功能，不因本轮收尾缩小范围。以下 39 项清单保持完整，1 项已完成、38 项仍待办。
 
-Current verification snapshot (2026-09-29): integration head 43c12ed; local release-package verifier passed for core/android/cli/mcp (doctor degraded because no local adb). The latest hosted run 36496221546 passed Ubuntu, macOS, and Android but Windows failed during temporary-directory cleanup with EBUSY; the cleanup retry fix is integrated and awaits a new hosted run. Public main remains at ff8750f until that run is published. Real-device/OEM acceptance remains unavailable; emulator evidence only.
+Current verification snapshot (2026-09-29): integration head 3174d2b; local release-package verifier passed for core/android/cli/mcp (doctor degraded because no local adb). Hosted run 36497994720 passed Windows, Linux, macOS, and Android Emulator. Windows cleanup emitted only a bounded EBUSY warning after verification; the matrix completed successfully. Public main is 64f5f92. Real-device/OEM acceptance remains unavailable; emulator evidence only.
 
 ## 本轮已完成的范围
 
@@ -81,8 +81,8 @@ Current verification snapshot (2026-09-29): integration head 43c12ed; local rele
 ## P3：CI 与开源发布
 
 - [x] 发布实验性源码快照并完成公开项目主页及安全发布准备；公开 `main` 初始提交 [`93749a0`](https://github.com/williamwue/appvanta/commit/93749a0cb87937149376aaac16adf8d199660acb) 的树与本地集成修订 `fda6c8b` 一致，[私密漏洞报告入口](https://github.com/williamwue/appvanta/security/advisories/new)已启用；这不等于完整产品验收或 npm 发布。
-- [ ] Windows/Linux/macOS 托管构建、测试、干净安装与子进程行为验收。
-- [ ] 托管 Android Emulator 验收及失败证据上传；CI/Jenkins 文档与实际执行对齐。
+- [x] Windows/Linux/macOS 托管构建、测试、干净安装与子进程行为验收。
+- [x] 托管 Android Emulator 验收及失败证据上传；CI/Jenkins 文档与实际执行对齐。
 - [ ] 各系统从空目录安装 tarball，验证 CLI/doctor/MCP，复验升级、迁移、卸载。
 - [ ] 发布版本、tag、可复核构建记录、发行物第三方归属及发布报告。
 - [ ] 对固定竞品基线重新逐项审计，补未盘点能力及证据；所有目标平台验收后才声明完整覆盖。
