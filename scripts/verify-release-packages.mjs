@@ -64,6 +64,10 @@ const cleanupWorkspace = async path => {
       return;
     } catch (error) {
       lastError = error;
+      if (error?.code === 'EBUSY') {
+        console.error(`Warning: verifier workspace remained busy after bounded cleanup retries; leaving it for the OS: ${path}`);
+        return;
+      }
     }
   }
   throw lastError ?? new Error(`Timed out cleaning verifier workspace: ${path}`);
