@@ -69,8 +69,8 @@ if (scenario === 'external-effect') expectedCalls.push('-s device shell settings
 assert.deepEqual([...calls].sort(), expectedCalls.sort());
 assert.equal(externalEffect, scenario === 'external-effect');
 const state = await inspectDeviceLock('device', locks);
-assert.equal(state.lease.runDirectory, run);
-assert.equal(state.lease.cleanupRequired.runDirectory, run);
+assert.equal(await fs.realpath(state.lease.runDirectory), await fs.realpath(run));
+assert.equal(await fs.realpath(state.lease.cleanupRequired.runDirectory), await fs.realpath(run));
 assert.equal(state.lease.cleanupRequired.reason, scenario === 'unsafe-child' ? 'nested-exit' : 'operation-exit');
 await assert.rejects(fs.readFile(join(run, 'flow.json')), { code: 'ENOENT' });
 await assert.rejects(recoverAndroidFlow('device', state.lease.token), error => {

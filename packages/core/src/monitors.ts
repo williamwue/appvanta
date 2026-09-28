@@ -1,4 +1,4 @@
-import { mkdir, readFile, readdir, rename, writeFile } from 'node:fs/promises';
+import { mkdir, readFile, readdir, realpath, rename, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { hostname } from 'node:os';
 import { randomUUID } from 'node:crypto';
@@ -33,9 +33,10 @@ export class MonitorStore {
     if (!Number.isInteger(intervalMs) || intervalMs < 500 || intervalMs > 60000) throw new Error('Monitor interval must be 500..60000 ms');
     if (!Number.isInteger(durationMs) || durationMs < intervalMs || durationMs > 3600000) throw new Error('Monitor duration must be at least one interval and at most 3600000 ms');
     const id = `monitor-${randomUUID()}`;
-    const rootDirectory = this.path(id);
+    const path = this.path(id);
+    await mkdir(path, { recursive: true });
+    const rootDirectory = await realpath(path);
     const record: MonitorRecord = { version: 1, id, deviceId, intervalMs, durationMs, rootDirectory, owner: { pid: process.pid, host: hostname(), session: this.session }, startedAt: new Date().toISOString(), status: 'queued', sampleCount: 0 };
-    await mkdir(rootDirectory, { recursive: true });
     await this.save(record);
     return record;
   }
@@ -81,7 +82,11 @@ export class MonitorStore {
   }
   async get(id: string): Promise<MonitorRecord> {
     const value = JSON.parse(await readFile(join(this.path(id), 'monitor.json'), 'utf8')) as MonitorRecord;
-    if (value.version !== 1 || value.id !== id || typeof value.deviceId !== 'string' || !value.deviceId || !Number.isInteger(value.intervalMs) || value.intervalMs < 500 || value.intervalMs > 60000 || !Number.isInteger(value.durationMs) || value.durationMs < value.intervalMs || value.durationMs > 3600000 || !Number.isInteger(value.sampleCount) || value.sampleCount < 0 || !value.owner || !Number.isInteger(value.owner.pid) || value.owner.pid < 1 || typeof value.owner.host !== 'string' || !value.owner.host || typeof value.owner.session !== 'string' || !value.owner.session || value.rootDirectory !== this.path(id) || !['queued', 'running', 'releasing', 'completed', 'released', 'failed', 'interrupted'].includes(value.status)) throw new Error('Invalid persisted monitor');
+    let rootMatches = false;
+    if (typeof value.rootDirectory === 'string') {
+      try { rootMatches = await realpath(value.rootDirectory) === await realpath(this.path(id)); } catch { /* invalid or replaced monitor root */ }
+    }
+    if (value.version !== 1 || value.id !== id || typeof value.deviceId !== 'string' || !value.deviceId || !Number.isInteger(value.intervalMs) || value.intervalMs < 500 || value.intervalMs > 60000 || !Number.isInteger(value.durationMs) || value.durationMs < value.intervalMs || value.durationMs > 3600000 || !Number.isInteger(value.sampleCount) || value.sampleCount < 0 || !value.owner || !Number.isInteger(value.owner.pid) || value.owner.pid < 1 || typeof value.owner.host !== 'string' || !value.owner.host || typeof value.owner.session !== 'string' || !value.owner.session || !rootMatches || !['queued', 'running', 'releasing', 'completed', 'released', 'failed', 'interrupted'].includes(value.status)) throw new Error('Invalid persisted monitor');
     if (!terminalMonitor(value.status) && value.owner.host === hostname()) {
       try { process.kill(value.owner.pid, 0); }
       catch (error) { if (error && typeof error === 'object' && 'code' in error && error.code === 'ESRCH') return { ...value, status: 'interrupted', error: 'Monitor owner process is no longer alive; retained samples remain available' }; }

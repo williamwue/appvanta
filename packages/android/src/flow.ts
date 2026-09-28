@@ -6,7 +6,7 @@ import { startFlowDiagnostics } from './flow-diagnostics.js';
 import { startFlowCapture } from './flow-capture.js';
 import { resolve, relative } from 'node:path';
 import { bindDeviceLockRun, createRunContext, executeFlow, inspectDeviceLock, parseFlow, retainDeviceLockForCleanup, withDeviceLock, withDeviceLockAdmission, runOnDevices } from '@appvanta/core';
-import { mkdir, writeFile } from 'node:fs/promises';
+import { mkdir, realpath, writeFile } from 'node:fs/promises';
 import { randomUUID } from 'node:crypto';
 import { AdbDriver } from './adb-driver.js';
 import { startNetwork } from './network-session.js';
@@ -30,7 +30,7 @@ export async function runAndroidFlow(serial: string, input: unknown, signal?: Ab
   catch (error) {
     try {
       const state = await inspectDeviceLock(serial);
-      if (!state || state.lease.runDirectory !== context.rootDirectory) throw new Error('Pre-Flow lease binding changed');
+      if (!state || !state.lease.runDirectory || await realpath(context.rootDirectory) !== state.lease.runDirectory) throw new Error('Pre-Flow lease binding changed');
       await writeFile(resolve(context.rootDirectory, 'pre-flow-failure.json'), JSON.stringify({ version: 1, scope: 'run-created-callback', deviceId: serial, token: state.lease.token, runDirectory: context.rootDirectory, error: String(error) }, null, 2), { flag: 'wx' });
     } catch (evidenceError) {
       throw new AggregateError([error, evidenceError], 'Run creation callback and pre-Flow failure evidence both failed');
