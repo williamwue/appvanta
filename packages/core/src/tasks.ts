@@ -24,6 +24,10 @@ export interface TaskRecord {
   completionWebhook?: string;
   notification?: CompletionNotificationRecord;
 }
+export interface ReservedTaskReceipt {
+  readonly id: string;
+  readonly digestSha256: string;
+}
 export const terminalTask = (status: TaskStatus) => ['passed', 'failed', 'cancelled', 'interrupted'].includes(status);
 const uuidPattern = /^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/;
 const isCode = (error: unknown, code: string) => !!error && typeof error === 'object' && 'code' in error && error.code === code;
@@ -150,7 +154,9 @@ export class TaskStore {
         try { process.kill(existing.owner.pid, 0); throw new Error('Reserved task is owned by a live worker'); }
         catch (error) { if (error instanceof Error && error.message === 'Reserved task is owned by a live worker') throw error; if (!isCode(error, 'ESRCH')) throw error; }
       }
-      return await this.get(id);
+      // Preserve the queued record for an explicit adoptReserved/claimReserved
+      // call. Calling get() here would project a dead owner to interrupted.
+      return existing;
     } catch (error) {
       if (!isCode(error, 'ENOENT')) throw error;
     }
@@ -168,6 +174,76 @@ export class TaskStore {
       if (!isCode(error, 'EEXIST')) throw error;
       return this.createReserved(id, deviceId, parsedFlow, reservation, options);
     }
+  }
+
+  /**
+   * Adopt a queued task published by an adjudicated reservation after its
+   * previous worker died. The reservation marker is the immutable capability;
+   * callers must provide its id and digest and the expected task revision.
+   * This deliberately reads task.json directly instead of get(), because get()
+   * projects a dead owner to `interrupted` and would make a safe adoption
+   * indistinguishable from an unsafe continuation.
+   */
+  async adoptReserved(id: string, reservation: ReservedTaskReceipt, expectedRevision?: number): Promise<TaskRecord> {
+    return this.claimReservedInternal(id, reservation, expectedRevision, 'queued');
+  }
+
+  /** Claim a queued reserved task for execution, atomically transferring its
+   * dead local owner and changing its state to running. */
+  async claimReserved(id: string, reservation: ReservedTaskReceipt, expectedRevision?: number): Promise<TaskRecord> {
+    return this.claimReservedInternal(id, reservation, expectedRevision, 'running');
+  }
+
+  private async claimReservedInternal(id: string, reservation: ReservedTaskReceipt,
+    expectedRevision: number | undefined, status: 'queued' | 'running'): Promise<TaskRecord> {
+    if (!/^task-[a-f0-9-]{36}$/.test(id) || !reservation || !uuidPattern.test(reservation.id) ||
+      !/^[a-f0-9]{64}$/.test(reservation.digestSha256)) throw new Error('Invalid reserved task claim');
+    if (expectedRevision !== undefined && (!Number.isSafeInteger(expectedRevision) || expectedRevision < 0))
+      throw new Error('Invalid reserved task revision');
+    return this.enqueue(id, async () => {
+      const root = this.path(id);
+      const claimLockPath = join(root, 'reserved-claim.lock');
+      let claimLock;
+      try { claimLock = await open(claimLockPath, 'wx'); }
+      catch (error) {
+        if (isCode(error, 'EEXIST')) throw new Error('Reserved task claim is already in progress');
+        throw error;
+      }
+      try {
+      const marker = JSON.parse(await readFile(join(root, 'reservation.json'), 'utf8')) as Record<string, unknown>;
+      if (marker.version !== 1 || marker.taskId !== id || marker.reservationId !== reservation.id ||
+        marker.reservationDigestSha256 !== reservation.digestSha256 || marker.deviceId === undefined ||
+        typeof marker.flowSha256 !== 'string' || !/^[a-f0-9]{64}$/.test(marker.flowSha256))
+        throw new Error('Reserved task marker does not match claim');
+      const existing = JSON.parse(await readFile(join(root, 'task.json'), 'utf8')) as TaskRecord;
+      if (existing.version !== 1 || existing.id !== id || existing.status !== 'queued' || !existing.owner ||
+        !Number.isSafeInteger(existing.owner.pid) || existing.owner.pid < 1 || typeof existing.owner.session !== 'string' ||
+        !uuidPattern.test(existing.owner.session) || typeof existing.owner.host !== 'string' || existing.owner.host !== hostname() ||
+        marker.deviceId !== existing.deviceId || marker.flowSha256 !== createFlowDigest(existing.flow))
+        throw new Error('Reserved task is not queued on this host');
+      const revision = taskRevision(existing);
+      if (expectedRevision !== undefined && revision !== expectedRevision)
+        throw new Error('Reserved task revision changed');
+      const alreadyOwned = existing.owner.pid === process.pid && existing.owner.session === this.session;
+      if (!alreadyOwned) {
+        try { process.kill(existing.owner.pid, 0); throw new Error('Reserved task owner is still alive'); }
+        catch (error) {
+          if (error instanceof Error && error.message === 'Reserved task owner is still alive') throw error;
+          if (!isCode(error, 'ESRCH')) throw new Error('Reserved task owner is unknown; refusing adoption');
+        }
+      }
+      const next: TaskRecord = { ...existing, owner: { pid: process.pid, host: hostname(), session: this.session },
+        status, revision: nextTaskRevision(revision) };
+      const temporary = join(root, `reserved-claim-${randomUUID()}.tmp`);
+      await writeFile(temporary, JSON.stringify(next, null, 2), { flag: 'wx' });
+      try { await renameWithRetry(temporary, join(root, 'task.json')); }
+      catch (error) { await removeTemporary(temporary); throw error; }
+      return next;
+      } finally {
+        await claimLock.close().catch(() => {});
+        await unlink(claimLockPath).catch(() => {});
+      }
+    });
   }
   async save(task: TaskRecord): Promise<void> {
     if (task.owner.session !== this.session || task.owner.pid !== process.pid) throw new Error('Task is owned by another worker');

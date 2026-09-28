@@ -295,6 +295,27 @@ test('recovered continuation atomically owns the device and binds a new run', as
   }
 });
 
+test('pre-bind continuation failure retains the transferred source run for guarded recovery', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'appvanta-handoff-prebind-'));
+  const module = new URL('../dist/device-lock.js', import.meta.url).href;
+  const run = join(root, 'source-run'); await mkdir(run);
+  const code = `import { withDeviceLock, bindDeviceLockRun } from ${JSON.stringify(module)}; await withDeviceLock('prebind', async () => { await bindDeviceLockRun('prebind', process.argv[2], process.argv[1]); process.send('ready'); await new Promise(() => setInterval(() => {}, 1000)); }, process.argv[1]);`;
+  const child = spawn(process.execPath, ['--input-type=module', '-e', code, root, run], { windowsHide: true, stdio: ['ignore', 'ignore', 'inherit', 'ipc'] });
+  const exited = once(child, 'exit');
+  try {
+    await once(child, 'message', { signal: AbortSignal.timeout(10000) }); child.kill('SIGKILL'); await exited;
+    const old = (await inspectDeviceLock('prebind', root)).lease;
+    await assert.rejects(continueRecoveredDevice('prebind', old.token, async () => {}, async () => { throw new Error('startup failed'); }, root), /startup failed/);
+    const state = await inspectDeviceLock('prebind', root);
+    assert.equal(state.owner, 'alive');
+    assert.equal(state.lease.runDirectory, await realpath(run));
+    assert.equal(state.lease.cleanupRequired.runDirectory, await realpath(run));
+  } finally {
+    if (child.exitCode === null && child.signalCode === null) { child.kill('SIGKILL'); await exited; }
+    await rm(root, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
+  }
+});
+
 test('continued operation can retain cleanup and its live owner can recover after completion', async () => {
   const root = await mkdtemp(join(tmpdir(), 'appvanta-continued-cleanup-'));
   const module = new URL('../dist/device-lock.js', import.meta.url).href;

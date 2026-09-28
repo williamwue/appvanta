@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { spawn, spawnSync } from 'node:child_process';
 import { once } from 'node:events';
-import { mkdtemp, mkdir, readFile, writeFile, rm } from 'node:fs/promises';
+import { mkdtemp, mkdir, readFile, writeFile, rm, realpath } from 'node:fs/promises';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { createHash } from 'node:crypto';
@@ -27,7 +27,7 @@ test('dead Android preparation lease recovers only with matching predecessor and
     await start(`import {continueRecoveredDevice} from ${JSON.stringify(module)};
       await continueRecoveredDevice('preparation',${JSON.stringify(old.token)},async()=>{},async()=>{process.send('transferred');await new Promise(()=>setInterval(()=>{},1000));},undefined,'android-flow');`);
     const state = await inspectDeviceLock('preparation', locks);
-    assert.equal(state.owner, 'dead'); assert.equal(state.lease.runDirectory, undefined);
+    assert.equal(state.owner, 'dead'); assert.equal(state.lease.runDirectory, await realpath(run));
     assert.equal(state.lease.preparationScope, 'android-flow');
     const path = join(locks, createHash('sha256').update('preparation').digest('hex') + '.json');
     const original = await readFile(path, 'utf8');

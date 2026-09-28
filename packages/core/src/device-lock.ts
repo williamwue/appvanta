@@ -133,7 +133,9 @@ export async function bindDeviceLockRun(deviceId: string, runDirectory: string, 
   if (!held.getStore()?.get(path) || active.get(path) !== held.getStore()?.get(path)) throw new Error('Device lease is not held by this operation');
   const state = await inspectDeviceLock(deviceId, directory);
   if (!state || state.lease.token !== held.getStore()?.get(path) || state.lease.pid !== process.pid || state.lease.host !== hostname() || state.lease.processToken !== processToken) throw new Error('Device lease owner changed');
-  if (state.lease.runDirectory) throw new Error('Device lease already has a bound run');
+  const sourcePlaceholder = state.lease.preparationScope === 'android-flow' &&
+    !!state.lease.recoveredFrom?.runDirectory && state.lease.runDirectory === state.lease.recoveredFrom.runDirectory;
+  if (state.lease.runDirectory && !sourcePlaceholder) throw new Error('Device lease already has a bound run');
   const root = await realpath(resolve(runDirectory));
   const lease = { ...state.lease, runDirectory: root };
   const intentPath = `${path}.binding-${lease.token}.json`;
@@ -160,7 +162,9 @@ export async function bindDeviceLockRun(deviceId: string, runDirectory: string, 
 }
 
 export async function inspectPendingDeviceBinding(deviceId: string, lease: Readonly<DeviceLease>, directory = lockDirectory()) {
-  if (lease.runDirectory) throw new Error('Device already has a bound run');
+  const sourcePlaceholder = lease.preparationScope === 'android-flow' &&
+    !!lease.recoveredFrom?.runDirectory && lease.runDirectory === lease.recoveredFrom.runDirectory;
+  if (lease.runDirectory && !sourcePlaceholder) throw new Error('Device already has a bound run');
   let contents: string;
   try { contents = await readFile(`${leasePath(deviceId, directory)}.binding-${lease.token}.json`, 'utf8'); }
   catch (error) {
@@ -351,7 +355,7 @@ export async function continueRecoveredDevice<T>(deviceId: string, expectedToken
     await cleanup(Object.freeze(lease));
     await requireDead();
     const sourceRun = lease.runDirectory ?? lease.recoveredFrom?.runDirectory;
-    const next: DeviceLease = { version: 2, token, deviceId, pid: process.pid, host: hostname(), processToken, startedAt: new Date().toISOString(), recoveredFrom: { token: lease.token, ...(sourceRun ? { runDirectory: sourceRun } : {}) }, ...(preparationScope ? { preparationScope } : {}) };
+    const next: DeviceLease = { version: 2, token, deviceId, pid: process.pid, host: hostname(), processToken, startedAt: new Date().toISOString(), ...(sourceRun ? { runDirectory: sourceRun } : {}), recoveredFrom: { token: lease.token, ...(sourceRun ? { runDirectory: sourceRun } : {}) }, ...(preparationScope ? { preparationScope } : {}) };
     const temporary = `${path}.${token}.tmp`;
     await writeFile(temporary, JSON.stringify(next), { flag: 'wx' });
     await rename(temporary, path);

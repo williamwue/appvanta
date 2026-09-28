@@ -56,6 +56,40 @@ async function recoverAndroidState(deviceId: string, lease: Readonly<DeviceLease
         await requireManualRecovery(deviceId, lease, auditRoot, reason, error);
       }
     }
+    // A transferred Android lease keeps the predecessor run as a source
+    // placeholder until the successor run binds. Treat that placeholder as
+    // recoverable evidence, while still validating any in-flight binding intent.
+    const sourcePlaceholder = lease.preparationScope === 'android-flow' &&
+      !!lease.recoveredFrom?.runDirectory && lease.runDirectory === lease.recoveredFrom.runDirectory;
+    if (sourcePlaceholder) {
+      const source = await realpath(lease.recoveredFrom!.runDirectory!);
+      if (source !== lease.recoveredFrom!.runDirectory) throw new Error('Continuation source path changed');
+      const predecessor = JSON.parse(await readFile(join(source, 'device-lease.json'), 'utf8'));
+      if (predecessor.token !== lease.recoveredFrom!.token || predecessor.deviceId !== deviceId || predecessor.runDirectory !== source)
+        throw new Error('Continuation predecessor binding mismatch');
+      let pending;
+      try { pending = await inspectPendingDeviceBinding(deviceId, lease); }
+      catch (error) {
+        if ((error as NodeJS.ErrnoException).code !== 'APPVANTA_BINDING_ABSENT') throw error;
+      }
+      if (!pending) {
+        const evidence = join(source, `preparation-recovery-${randomUUID()}.json`);
+        const result = { status: 'recovered', scope: 'pre-continuation-binding', runDirectory: source, evidence, steps: [] };
+        await writeFile(evidence, JSON.stringify({ ...result, lease, reason: 'Android continuation cleanup completed before successor binding' }, null, 2), { flag: 'wx' });
+        return result;
+      }
+      const metadata = JSON.parse(await readFile(join(pending.runDirectory, 'run.json'), 'utf8'));
+      if (metadata.status !== 'planned') throw new Error('Unbound run is no longer in planned state');
+      for (const name of ['flow.json', 'progress.json', 'steps.jsonl']) {
+        try { await readFile(join(pending.runDirectory, name)); }
+        catch (error) { if ((error as NodeJS.ErrnoException).code === 'ENOENT') continue; throw error; }
+        throw new Error('Unbound run contains execution evidence; refusing release');
+      }
+      const evidence = join(pending.runDirectory, `binding-recovery-${randomUUID()}.json`);
+      const result = { status: 'recovered', scope: 'pre-flow-binding', runDirectory: pending.runDirectory, evidence, steps: [] };
+      await writeFile(evidence, JSON.stringify({ ...result, lease, reason: 'Persisted Android successor binding intent; executeFlow did not begin' }, null, 2), { flag: 'wx' });
+      return result;
+    }
     if (!lease.runDirectory) {
       let pending;
       try { pending = await inspectPendingDeviceBinding(deviceId, lease); }
