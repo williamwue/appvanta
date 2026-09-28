@@ -34,7 +34,11 @@ mock.module('node:child_process', { namedExports: {
 const { bindDeviceLockRun, createRunContext, executeFlow, inspectDeviceLock, parseFlow, recoverDeviceLock, retainDeviceLockForCleanup, withDeviceLock } = await import('../../../core/dist/index.js');
 const { startFlowCapture } = await import('../../dist/flow-capture.js');
 const { captureScreenSegments } = await import('../../dist/segmented-screen.js');
-const root = await fs.mkdtemp(join(tmpdir(), 'appvanta-capture-evidence-'));
+const temporaryRoot = await fs.mkdtemp(join(tmpdir(), 'appvanta-capture-evidence-'));
+const physicalRoot = join(temporaryRoot, 'physical');
+const root = join(temporaryRoot, 'alias');
+await fs.mkdir(physicalRoot);
+await fs.symlink(physicalRoot, root, process.platform === 'win32' ? 'junction' : 'dir');
 const locks = join(root, 'locks');
 const driver = { name: 'fake', observe: async () => ({ capturedAt: new Date().toISOString(), metadata: {} }), execute: async () => ({ success: true }), checkCondition: async () => true };
 const device = { id: 'device', name: 'device', platform: 'android', status: 'online', capabilities: [] };
@@ -50,7 +54,8 @@ try {
   assert.equal(result.status, 'failed');
   assert.equal(finalWritesDenied, 1);
   const state = await inspectDeviceLock('device', locks);
-  assert.equal(state.lease.cleanupRequired.runDirectory, result.runDirectory);
+  assert.equal(state.lease.cleanupRequired.runDirectory, state.lease.runDirectory);
+  assert.equal(state.lease.runDirectory, await fs.realpath(result.runDirectory));
   const summary = JSON.parse(await fs.readFile(join(result.runDirectory, 'captures', 'summary.json'), 'utf8'));
   assert.match(summary.records[0].error, /remote PID cleanup uncertainty/);
   assert.match(summary.records[0].error, /final capture evidence EACCES/);
@@ -69,5 +74,5 @@ try {
   assert.equal(segmentFailureWritesDenied, 1);
   console.log('capture-evidence-failure: passed');
 } finally {
-  await fs.rm(root, { recursive: true, force: true });
+  await fs.rm(temporaryRoot, { recursive: true, force: true });
 }

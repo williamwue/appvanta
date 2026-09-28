@@ -16,7 +16,8 @@ let callbackMarkerDenied = false;
 mock.module('node:fs/promises', { namedExports: {
   ...fs,
   writeFile: async (...args) => {
-    if (denyCallbackMarker && String(args[0]).endsWith('pre-flow-failure.json')) {
+    if (denyCallbackMarker && (String(args[0]).endsWith('pre-flow-failure.json')
+      || String(args[1]).includes('callback persistence failed after external effect'))) {
       callbackMarkerDenied = true;
       throw Object.assign(new Error('injected callback marker EACCES'), { code: 'EACCES' });
     }

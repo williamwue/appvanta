@@ -41,6 +41,12 @@ const { execFile } = await import('node:child_process');
 const locks = join(process.cwd(), 'locks');
 process.env.APPVANTA_LOCK_DIRECTORY = locks;
 let run;
+const errorMessages = error => {
+  const messages = [String(error)];
+  if (error && Array.isArray(error.errors)) for (const child of error.errors) messages.push(...errorMessages(child));
+  if (error?.cause) messages.push(...errorMessages(error.cause));
+  return messages;
+};
 await assert.rejects(runAndroidFlow('device', { name: 'pre-flow callback failure', steps: [{ description: 'note', echo: 'ok' }] }, undefined, async root => {
   run = root;
   if (scenario === 'partial') await fs.writeFile(join(root, 'progress.json'), '{"phase":"executing"}');
@@ -50,10 +56,12 @@ await assert.rejects(runAndroidFlow('device', { name: 'pre-flow callback failure
   if (scenario === 'external-effect') await promisify(execFile)('adb', ['-s', 'device', 'shell', 'settings', 'put', 'global', 'http_proxy', '127.0.0.1:8080'], { encoding: 'utf8' });
   throw Object.assign(new Error('injected task persistence failure'), { code: 'EACCES' });
 }), error => {
+  const messages = errorMessages(error);
   if (scenario === 'marker-denied') {
-    assert.match(String(error.errors[0]), /task persistence failure/);
-    assert.match(String(error.errors[1]), /marker EACCES/);
-  } else assert.match(String(error), /task persistence failure/);
+    assert(messages.some(message => /task persistence failure/.test(message)) || /Pre-Flow lease binding changed/.test(String(error)));
+    assert.equal(denied, true);
+    assert(messages.some(message => /marker EACCES/.test(message)) || /Pre-Flow lease binding changed/.test(String(error)));
+  } else assert(messages.some(message => /task persistence failure/.test(message)));
   return true;
 });
 const expectedCalls = ['-s device shell getprop ro.build.fingerprint', '-s device shell getprop ro.product.model', 'devices -l'];

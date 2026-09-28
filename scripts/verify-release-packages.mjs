@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { execFile, spawn } from 'node:child_process';
 import { once } from 'node:events';
-import { mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { promisify } from 'node:util';
@@ -9,7 +9,7 @@ import { promisify } from 'node:util';
 const root = resolve('.');
 const workspace = await mkdtemp(join(tmpdir(), 'appvanta-release-'));
 const tarballs = join(workspace, 'tarballs');
-await import('node:fs/promises').then(({ mkdir }) => mkdir(tarballs));
+await mkdir(tarballs);
 const run = async (file, args, options = {}) => promisify(execFile)(file, args, { encoding: 'utf8', timeout: 120000, windowsHide: true, ...options });
 const runNpm = async (args, options = {}) => {
   if (process.env.npm_execpath) return run(process.execPath, [process.env.npm_execpath, ...args], options);
@@ -56,7 +56,9 @@ try {
 
   assert((await stat(join(workspace, 'node_modules/@appvanta/android/dist/runtime/capture-network.py'))).isFile());
   const result = { status: 'passed', packages, doctor: doctorReport.verdict, tools: messages.find(message => message.id === 2).result.tools.length };
-  await writeFile(join(root, '.appvanta/release-package-verification.json'), JSON.stringify(result, null, 2));
+  const outputDirectory = join(root, '.appvanta');
+  await mkdir(outputDirectory, { recursive: true });
+  await writeFile(join(outputDirectory, 'release-package-verification.json'), JSON.stringify(result, null, 2));
   console.log(JSON.stringify(result));
 } finally {
   if (mcpChild && mcpChild.exitCode === null && mcpChild.signalCode === null) { const exited = once(mcpChild, 'exit'); mcpChild.kill(); await exited; }

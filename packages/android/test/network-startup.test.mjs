@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { copyFile, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { copyFile, mkdir, mkdtemp, readFile, realpath, rm, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { pathToFileURL } from 'node:url';
@@ -30,7 +30,8 @@ test('worker exit before readiness with unverified proxy restoration retains the
       await retainDeviceLockForCleanup('device', runDirectory, locks);
     }, locks);
     const state = await inspectDeviceLock('device', locks);
-    assert.equal(state.lease.cleanupRequired.runDirectory, runDirectory);
+    assert.equal(state.lease.cleanupRequired.runDirectory, state.lease.runDirectory);
+    assert.equal(state.lease.runDirectory, await realpath(runDirectory));
     assert.equal(JSON.parse(await readFile(join(runDirectory, 'network/summary.json'), 'utf8')).proxyRestored, false);
     await assert.rejects(recoverDeviceLock('device', state.lease.token, async () => { throw new Error('proxy still unverified'); }, locks), /proxy still unverified/);
     await recoverDeviceLock('device', state.lease.token, async () => {}, locks);
