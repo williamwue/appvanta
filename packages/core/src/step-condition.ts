@@ -1,3 +1,4 @@
+import { validateExtractedValue } from './flow-values.js';
 import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { isDeepStrictEqual } from 'node:util';
@@ -6,6 +7,7 @@ import type { ReportStep } from './report.js';
 import { validateCompletedBranch } from './branch-decision.js';
 
 export async function validateCompletedCondition(root: string, step: FlowStep, result: ReportStep): Promise<void> {
+  await validateExtractedValue(root, step, result);
   await validateCompletedBranch(root, step, result);
   if (step.branch && result.branchMatched === false) return;
   if (!step.when) {

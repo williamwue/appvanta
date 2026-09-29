@@ -1,3 +1,4 @@
+import { completedValues } from './flow-values.js';
 import { createHash } from 'node:crypto';
 import { readFile, realpath } from 'node:fs/promises';
 import { isAbsolute, join, relative, resolve } from 'node:path';
@@ -127,7 +128,7 @@ export async function prepareFlowContinuation(root: string, checkpoint: unknown,
   remaining.splice(snapshot.active ? 1 : 0, 0, ...queued.map(item => ({ step: item.step, instructionId: item.id })));
   if (!remaining.length) throw new Error('No remaining steps to continue');
   const { resetApplications: omittedResets, steps: _steps, ...configuration } = flow;
-  const continuation = parseFlow({ ...configuration, name: `Continue: ${flow.name}`, steps: [
+  const continuation = parseFlow({ ...configuration, ...await completedValues(root, flow.values, snapshot.completed), name: `Continue: ${flow.name}`, steps: [
     { description: 'Verify continuation checkpoint', action: { kind: 'wait', condition, timeoutMs } },
     ...await freezeCompletedBranches(root, snapshot.completed, remaining.map(item => item.step)),
   ] });
@@ -154,9 +155,10 @@ export async function prepareAdjudicatedFlowContinuation(root: string, checkpoin
     ...snapshot.pending,
   ];
   const { resetApplications: omittedResets, steps: _steps, ...configuration } = flow;
+  if (snapshot.active.step.extract) throw new Error('An unfinished extraction cannot be skipped by adjudication');
   const activeBranches = await inspectActiveBranchChoices(root, snapshot.active.step);
   if (activeBranches.selected === undefined) throw new Error('Cannot adjudicate an unfinished initial branch decision; its remaining choice is not verified');
-  const continuation = parseFlow({ ...configuration, name: `Continue after adjudication: ${flow.name}`, steps: [
+  const continuation = parseFlow({ ...configuration, ...await completedValues(root, flow.values, snapshot.completed), name: `Continue after adjudication: ${flow.name}`, steps: [
     { description: 'Verify adjudicated postcondition on live device', action: { kind: 'wait', condition, timeoutMs } },
     ...await freezeCompletedBranches(root, snapshot.completed, remaining.map(item => item.step), activeBranches.choices.map(choice => [choice.decision.key, choice.decision.matched] as const)),
   ] });

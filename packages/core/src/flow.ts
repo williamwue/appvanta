@@ -1,5 +1,6 @@
 import { recordingDriver } from './recording.js';
 import { BranchDecisions } from './branch-decision.js';
+import { parseValueText } from './flow-schema.js';
 import { fingerprintProgressEvidence, type ProgressEvidenceHashes } from './flow-progress.js';
 import { recoverStep } from './recovery.js';
 import { createHash, randomUUID } from 'node:crypto';
@@ -14,6 +15,7 @@ import { writeMarkdownReport } from './report.js';
 import type { ReportStep } from './report.js';
 
 export interface FlowDriver extends DeviceDriver {
+  extractValue?(deviceId: DeviceId, extraction: NonNullable<FlowStep['extract']>, observation: Observation): Promise<string>;
   openUrl(deviceId: DeviceId, url: string): Promise<void>;
   checkCondition(deviceId: DeviceId, condition: Condition, observation?: Observation): Promise<boolean>;
 }
@@ -46,6 +48,7 @@ export async function executeFlow({ context, driver, flow, signal, resetAppData,
   const root = context.rootDirectory;
   const deviceId = context.device.id;
   const branches = new BranchDecisions(root);
+  const values = new Map(Object.entries(flow.values ?? {}));
   const steps: ReportStep[] = [];
   let recordingStep = 0;
   driver = await recordingDriver(driver, root, () => recordingStep);
@@ -133,6 +136,7 @@ export async function executeFlow({ context, driver, flow, signal, resetAppData,
       const conditionEvidence: string[] = [];
       let conditionMatched: boolean | undefined;
       let branchMatched: boolean | undefined;
+      let extracted: string | undefined;
       let conditionAccepted = !definition.when && !definition.branch;
       let marked = false;
       const verify = async () => {
@@ -182,6 +186,24 @@ export async function executeFlow({ context, driver, flow, signal, resetAppData,
           }
           conditionAccepted = true;
         }
+        if (definition.extract) {
+          if (!driver.extractValue) throw new Error('Driver does not support extracting values');
+          if (values.has(definition.extract.name)) throw new Error('Duplicate extracted value name');
+          if (values.size >= 100) throw new Error('At most 100 runtime values');
+          extracted = parseValueText(await driver.extractValue(deviceId, definition.extract, observation));
+          signal?.throwIfAborted();
+          const path = `value-${index + 1}.json`, handle = await open(join(root, path), 'wx');
+          try { await handle.writeFile(JSON.stringify({ version: 1, index: index + 1, extraction: definition.extract, value: extracted })); await handle.sync(); }
+          finally { await handle.close(); }
+          conditionEvidence.push(path, ...evidence(observation));
+          values.set(definition.extract.name, extracted);
+        }
+        if (definition.inputValue) {
+          const text = values.get(definition.inputValue.name);
+          if (text === undefined) throw new Error(`Missing extracted value: ${definition.inputValue.name}`);
+          const result = await driver.execute(deviceId, { kind: 'input', target: definition.inputValue.target, text });
+          if (!result.success) throw new Error(result.message ?? 'Value input failed');
+        }
         if (definition.launchPackage) await driver.launch(deviceId, brand<string, 'AppPackageName'>(definition.launchPackage));
         if (definition.openUrl) await driver.openUrl(deviceId, definition.openUrl);
         if (definition.action) {
@@ -190,7 +212,7 @@ export async function executeFlow({ context, driver, flow, signal, resetAppData,
         }
         await verify();
         signal?.throwIfAborted();
-        await append({ index: index + 1, description: definition.description, status: 'passed', ...(branchMatched !== undefined ? { branchMatched } : {}), ...(conditionMatched !== undefined ? { conditionMatched } : {}), ...(definition.echo ? { output: definition.echo } : {}), evidence: [...evidence(observation), ...conditionEvidence], durationMs: Date.now() - started });
+        await append({ index: index + 1, description: definition.description, status: 'passed', ...(branchMatched !== undefined ? { branchMatched } : {}), ...(conditionMatched !== undefined ? { conditionMatched } : {}), ...(extracted !== undefined ? { output: extracted } : definition.echo ? { output: definition.echo } : {}), evidence: [...evidence(observation), ...conditionEvidence], durationMs: Date.now() - started });
         if (next.instructionId) await finishInstruction?.(next.instructionId, 'applied');
       } catch (error) {
         const restorationUnverified = !!error && typeof error === 'object' && 'code' in error && error.code === 'APPVANTA_RESTORATION_UNVERIFIED';

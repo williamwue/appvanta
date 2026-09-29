@@ -25,14 +25,18 @@ const conditions = [
 const present = (names: string[]) => ({ anyOf: names.map(name => ({ required: [name] })) });
 const branchProperties = { key: { type: 'string', pattern: '^[A-Za-z][A-Za-z0-9_-]{0,63}$' }, when: { oneOf: conditions.filter(condition => (condition.properties as Record<string, { const?: string }>).kind?.const !== 'screen-stable') }, equals: { type: 'boolean' }, resolved: { type: 'boolean' } };
 const branchRequired = ['key', 'when', 'equals'];
+const valueName = { type: 'string', pattern: '^[A-Za-z][A-Za-z0-9_-]{0,63}$' };
 const stepProperties = {
+  extract: object({ name: valueName, target: { oneOf: semantic.slice(0, 4) }, attribute: { enum: ['text', 'accessibility-label'] } }),
+  inputValue: object({ name: valueName, target: { oneOf: semantic.slice(0, 4) } }),
   branch: object({ ...branchProperties, parents: { type: 'array', minItems: 1, maxItems: 31, items: object(branchProperties, branchRequired) } }, branchRequired),
   when: { oneOf: conditions.filter(condition => (condition.properties as Record<string, { const?: string }>).kind?.const !== 'screen-stable') },
   description: string, action: ref('action'), launchPackage: packageName,
   openUrl: { type: 'string', format: 'http-url' },
   echo: { type: 'string', minLength: 1, maxLength: 10000 }, assertText: string, assertTarget: ref('semanticTarget'), timeoutMs: integer(1, 3600000), recovery: ref('recovery'),
 };
-const step = (legacy = false) => ({ ...object(stepProperties, legacy ? [] : ['description']), ...present(['action', 'launchPackage', 'openUrl', 'assertText', 'assertTarget', 'echo']),
+const step = (legacy = false) => ({ ...object(stepProperties, legacy ? [] : ['description']), ...present(['extract', 'inputValue', 'action', 'launchPackage', 'openUrl', 'assertText', 'assertTarget', 'echo']),
+  allOf: ['extract', 'inputValue'].map(key => ({ if: { required: [key] }, then: { not: { anyOf: ['extract', 'inputValue', 'action', 'launchPackage', 'openUrl', 'echo', 'recovery', 'assertText', 'assertTarget'].filter(other => other !== key).map(other => ({ required: [other] })) } } })),
   if: { required: ['recovery'] }, then: present(['assertText', 'assertTarget']) });
 export const definitions = {
   semanticTarget: { oneOf: semantic },
@@ -50,7 +54,7 @@ export const definitions = {
   network: object({ python: string, mitmdump: string, port: integer(1024, 65535), mapRemote: string, upstreamCa: string }, ['python', 'mitmdump']),
   diagnostics: object({ packages: { type: 'array', minItems: 1, maxItems: 20, uniqueItems: true, items: packageName } }),
   capture: { ...object({ screenSeconds: integer(1, 3600), screenSegmentSeconds: integer(5, 180), perfettoSeconds: integer(1, 60) }, []), ...present(['screenSeconds', 'perfettoSeconds']), dependencies: { screenSegmentSeconds: ['screenSeconds'] } },
-  flow: object({ appOps: { type: 'array', minItems: 1, maxItems: 20, items: object({ packageName, operation: { type: 'string', pattern: '^[A-Z][A-Z0-9_]*$' }, mode: { enum: ['allow', 'ignore', 'deny', 'default'] } }) }, permissions: { type: 'array', minItems: 1, maxItems: 20, uniqueItems: true, items: object({ packageName, permission: { type: 'string', pattern: '^[A-Za-z][A-Za-z0-9_]*(\\.[A-Za-z0-9_]+)+$' }, state: { enum: ['grant', 'deny'] } }) }, inputMethod: { type: 'string', pattern: '^[A-Za-z0-9_.]+/[A-Za-z0-9_.$]+$' }, files: { type: 'array', minItems: 1, maxItems: 20, items: object({ path: { type: 'string', pattern: fixturePathPattern }, content: { type: 'string', maxLength: 1000000 } }) }, applications: { type: 'array', minItems: 1, maxItems: 20, uniqueItems: true, items: packageName }, resetApplications: { type: 'array', minItems: 1, maxItems: 20, uniqueItems: true, items: packageName }, version: { const: 1 }, name: string, description: string, network: ref('network'), capture: ref('capture'), diagnostics: ref('diagnostics'), steps: { type: 'array', minItems: 1, items: ref('step') } }, ['name', 'steps']),
+  flow: object({ values: { type: 'object', maxProperties: 100, propertyNames: valueName, additionalProperties: { type: 'string', maxLength: 24000 } }, appOps: { type: 'array', minItems: 1, maxItems: 20, items: object({ packageName, operation: { type: 'string', pattern: '^[A-Z][A-Z0-9_]*$' }, mode: { enum: ['allow', 'ignore', 'deny', 'default'] } }) }, permissions: { type: 'array', minItems: 1, maxItems: 20, uniqueItems: true, items: object({ packageName, permission: { type: 'string', pattern: '^[A-Za-z][A-Za-z0-9_]*(\\.[A-Za-z0-9_]+)+$' }, state: { enum: ['grant', 'deny'] } }) }, inputMethod: { type: 'string', pattern: '^[A-Za-z0-9_.]+/[A-Za-z0-9_.$]+$' }, files: { type: 'array', minItems: 1, maxItems: 20, items: object({ path: { type: 'string', pattern: fixturePathPattern }, content: { type: 'string', maxLength: 1000000 } }) }, applications: { type: 'array', minItems: 1, maxItems: 20, uniqueItems: true, items: packageName }, resetApplications: { type: 'array', minItems: 1, maxItems: 20, uniqueItems: true, items: packageName }, version: { const: 1 }, name: string, description: string, network: ref('network'), capture: ref('capture'), diagnostics: ref('diagnostics'), steps: { type: 'array', minItems: 1, items: ref('step') } }, ['name', 'steps']),
 };
 
 /** The advertised schema is also the schema enforced before any tool dispatch. */

@@ -287,6 +287,14 @@ export class AdbDriver implements DeviceDriver {
     return { success: true, startedAt, finishedAt: new Date().toISOString() };
   }
 
+  public async extractValue(_deviceId: DeviceId, extraction: { target: Target; attribute: 'text' | 'accessibility-label' }, observation: Observation): Promise<string> {
+    this.signal?.throwIfAborted();
+    if (!observation.uiTreePath) throw new Error('Extraction requires a captured UI tree');
+    const node = await findNode(observation.uiTreePath, extraction.target);
+    if (node.password) throw new Error('Cannot extract a password field');
+    return (extraction.attribute === 'text' ? node.text : node.contentDescription) ?? '';
+  }
+
   public async checkCondition(deviceId: DeviceId, condition: Condition, observation?: Observation, baseline?: UiTree): Promise<boolean> {
     this.signal?.throwIfAborted();
     if (condition.kind === 'app-running') {

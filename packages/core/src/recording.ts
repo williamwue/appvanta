@@ -67,8 +67,9 @@ export async function recordedFlow(root: string) {
       steps.push({ description: definition.description, echo: 'Originally skipped because its condition was false; no operation replayed.' });
       continue;
     }
-    if (!actual.length && (definition.action || definition.launchPackage || definition.openUrl)) throw new Error('Missing action recording for executed step');
+    if (!actual.length && (definition.action || definition.inputValue || definition.launchPackage || definition.openUrl)) throw new Error('Missing action recording for executed step');
     steps.push(...actual);
+    if (definition.extract) steps.push({ description: definition.description, echo: 'Previously extracted value; recorded inputs retain the observed text.' });
     if (definition.echo) steps.push({ description: definition.description, echo: definition.echo });
     const { assertText, assertTarget, timeoutMs } = definition;
     if (assertText || assertTarget) steps.push({ description: `${definition.description} — checkpoint`, ...(assertText ? { assertText } : {}), ...(assertTarget ? { assertTarget } : {}), ...(timeoutMs !== undefined ? { timeoutMs } : {}) });

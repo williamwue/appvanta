@@ -15,7 +15,7 @@ appvanta run-flow emulator-5554 compiled.json
 
 编译限制为 100 个全局变量、100 个片段、每片段 100 个参数、32 层调用嵌套、1000 个展开步骤和 100000 个遍历节点；变量对象和数组不作为绑定值。未知变量、未知片段、循环引用或不合法的最终 Flow 都会拒绝编译。
 
-当前是显式离线编译，输入文件为 JSON。动态提取值、外部文件导入、循环及 MCP 直接编译工具尚未实现。`node scripts/verify-flow-template.mjs [device]` 验证真实 CLI 编译、拒绝覆盖及可选设备 CLI/MCP 执行与持久 Flow 一致性。
+当前是显式离线编译，输入文件为 JSON。运行时具名字符串提取及输入引用见 [动态文本值](flow-values.md)；外部文件导入、循环及 MCP 直接编译工具尚未实现。`node scripts/verify-flow-template.mjs [device]` 验证真实 CLI 编译、拒绝覆盖及可选设备 CLI/MCP 执行与持久 Flow 一致性。
 
 ## 模板 then/else
 

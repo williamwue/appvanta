@@ -13,6 +13,8 @@ export interface RecoveryRule { readonly description: string; readonly when: Con
 export interface RecoveryPolicy { readonly maxAttempts: number; readonly rules: readonly RecoveryRule[] }
 export interface BranchSelector { readonly key: string; readonly when: Condition; readonly equals: boolean; readonly resolved?: boolean }
 export interface FlowStep {
+  readonly extract?: { readonly name: string; readonly target: Target; readonly attribute: 'text' | 'accessibility-label' };
+  readonly inputValue?: { readonly name: string; readonly target: Target };
   readonly branch?: BranchSelector & { readonly parents?: readonly BranchSelector[] };
   readonly when?: Condition;
   readonly recovery?: RecoveryPolicy;
@@ -25,7 +27,7 @@ export interface FlowStep {
   readonly timeoutMs?: number;
   readonly echo?: string;
 }
-export interface FlowDefinition { readonly version: 1; readonly applications?: readonly string[]; readonly resetApplications?: readonly string[]; readonly files?: readonly FileFixture[]; readonly inputMethod?: string; readonly permissions?: readonly PermissionFixture[]; readonly appOps?: readonly AppOpFixture[]; readonly name: string; readonly description?: string; readonly network?: NetworkConfig; readonly capture?: CaptureConfig; readonly diagnostics?: DiagnosticsConfig; readonly steps: readonly FlowStep[] }
+export interface FlowDefinition { readonly values?: Readonly<Record<string, string>>; readonly version: 1; readonly applications?: readonly string[]; readonly resetApplications?: readonly string[]; readonly files?: readonly FileFixture[]; readonly inputMethod?: string; readonly permissions?: readonly PermissionFixture[]; readonly appOps?: readonly AppOpFixture[]; readonly name: string; readonly description?: string; readonly network?: NetworkConfig; readonly capture?: CaptureConfig; readonly diagnostics?: DiagnosticsConfig; readonly steps: readonly FlowStep[] }
 
 function object(value: unknown): Record<string, unknown> {
   if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Error('Expected an object');
@@ -185,11 +187,24 @@ function parseBranchSelector(value: unknown): BranchSelector {
 }
 
 export function parseFlow(value: unknown): FlowDefinition {
-  const f = object(value); keys(f, ['version', 'appOps', 'permissions', 'inputMethod', 'files', 'applications', 'resetApplications', 'name', 'description', 'network', 'capture', 'diagnostics', 'steps']);
+  const f = object(value); keys(f, ['values', 'version', 'appOps', 'permissions', 'inputMethod', 'files', 'applications', 'resetApplications', 'name', 'description', 'network', 'capture', 'diagnostics', 'steps']);
+  const values = f.values === undefined ? undefined : Object.fromEntries(Object.entries(object(f.values)).map(([name, value]) => [parseValueName(name), parseValueText(value)]));
+  if (values && Object.keys(values).length > 100) throw new Error('At most 100 initial values');
   if (f.version !== undefined && f.version !== 1) throw new Error('Unsupported Flow version');
   if (!Array.isArray(f.steps) || !f.steps.length) throw new Error('Flow requires non-empty steps');
   const steps = f.steps.map((value): FlowStep => {
-    const s = object(value); keys(s, ['description', 'action', 'launchPackage', 'openUrl', 'assertText', 'assertTarget', 'timeoutMs', 'recovery', 'echo', 'when', 'branch']);
+    const s = object(value); keys(s, ['extract', 'inputValue', 'description', 'action', 'launchPackage', 'openUrl', 'assertText', 'assertTarget', 'timeoutMs', 'recovery', 'echo', 'when', 'branch']);
+    let extract: FlowStep['extract'], inputValue: FlowStep['inputValue'];
+    if (s.extract !== undefined || s.inputValue !== undefined) {
+      if (s.extract !== undefined && s.inputValue !== undefined || ['action', 'launchPackage', 'openUrl', 'echo', 'recovery', 'assertText', 'assertTarget'].some(key => s[key] !== undefined)) throw new Error('Value steps require one operation');
+      const v = object(s.extract ?? s.inputValue); keys(v, s.extract !== undefined ? ['name', 'target', 'attribute'] : ['name', 'target']);
+      const name = parseValueName(v.name), target = parseTarget(v.target);
+      if (target.kind === 'coordinate' || target.kind === 'image-template') throw new Error('Values require a semantic UI target');
+      if (s.extract !== undefined) {
+        if (v.attribute !== 'text' && v.attribute !== 'accessibility-label') throw new Error('Unsupported extracted attribute');
+        extract = { name, target, attribute: v.attribute };
+      } else inputValue = { name, target };
+    }
     let branch: FlowStep['branch'];
     if (s.branch !== undefined) {
       const { parents, ...selector } = object(s.branch);
@@ -200,7 +215,7 @@ export function parseFlow(value: unknown): FlowDefinition {
     }
     const when = s.when === undefined ? undefined : parseCondition(s.when);
     if (when?.kind === 'ui-changed' || when?.kind === 'screen-stable') throw new Error('Step condition requires a point-in-time application state');
-    if (!['action', 'launchPackage', 'openUrl', 'assertText', 'assertTarget', 'echo'].some(k => s[k] !== undefined)) throw new Error('Empty Flow step');
+    if (!['extract', 'inputValue', 'action', 'launchPackage', 'openUrl', 'assertText', 'assertTarget', 'echo'].some(k => s[k] !== undefined)) throw new Error('Empty Flow step');
     const openUrl = s.openUrl !== undefined ? text(s.openUrl) : undefined;
     if (openUrl && !['http:', 'https:'].includes(new URL(openUrl).protocol)) throw new Error('openUrl requires HTTP(S)');
     const assertTarget = s.assertTarget !== undefined ? parseTarget(s.assertTarget) : undefined;
@@ -209,7 +224,7 @@ export function parseFlow(value: unknown): FlowDefinition {
     if (recovery && s.assertText === undefined && s.assertTarget === undefined) throw new Error('Recovery requires a step checkpoint');
     const echo = s.echo === undefined ? undefined : text(s.echo);
     if (echo && Buffer.byteLength(echo, 'utf8') > 10000) throw new Error('Echo must be at most 10000 UTF-8 bytes');
-    return { ...(branch ? { branch } : {}), ...(when ? { when } : {}), ...(recovery ? { recovery } : {}), description: text(s.description), ...(s.action !== undefined ? { action: parseAction(s.action) } : {}), ...(s.launchPackage !== undefined ? { launchPackage: packageName(s.launchPackage) } : {}), ...(openUrl ? { openUrl } : {}), ...(echo ? { echo } : {}), ...(s.assertText !== undefined ? { assertText: text(s.assertText) } : {}), ...(assertTarget ? { assertTarget } : {}), ...(s.timeoutMs !== undefined ? { timeoutMs: number(s.timeoutMs, 1, 3600000) } : {}) };
+    return { ...(extract ? { extract } : {}), ...(inputValue ? { inputValue } : {}), ...(branch ? { branch } : {}), ...(when ? { when } : {}), ...(recovery ? { recovery } : {}), description: text(s.description), ...(s.action !== undefined ? { action: parseAction(s.action) } : {}), ...(s.launchPackage !== undefined ? { launchPackage: packageName(s.launchPackage) } : {}), ...(openUrl ? { openUrl } : {}), ...(echo ? { echo } : {}), ...(s.assertText !== undefined ? { assertText: text(s.assertText) } : {}), ...(assertTarget ? { assertTarget } : {}), ...(s.timeoutMs !== undefined ? { timeoutMs: number(s.timeoutMs, 1, 3600000) } : {}) };
   });
   const branches = new Map<string, string>();
   for (const step of steps) if (step.branch) {
@@ -288,7 +303,7 @@ export function parseFlow(value: unknown): FlowDefinition {
     capture = { ...(c.screenSeconds !== undefined ? { screenSeconds: number(c.screenSeconds, 1, 3600) } : {}), ...(c.screenSegmentSeconds !== undefined ? { screenSegmentSeconds: number(c.screenSegmentSeconds, 5, 180) } : {}), ...(c.perfettoSeconds !== undefined ? { perfettoSeconds: number(c.perfettoSeconds, 1, 60) } : {}) };
   }
   const network = parseNetworkConfig(f.network);
-  return { version: 1, name: text(f.name), steps, ...(appOps ? { appOps } : {}), ...(permissions ? { permissions } : {}), ...(inputMethod ? { inputMethod } : {}), ...(files ? { files } : {}), ...(applications ? { applications } : {}), ...(resetApplications ? { resetApplications } : {}), ...(f.description !== undefined ? { description: text(f.description) } : {}), ...(network ? { network } : {}), ...(capture ? { capture } : {}), ...(diagnostics ? { diagnostics } : {}) };
+  return { version: 1, name: text(f.name), steps, ...(values ? { values } : {}), ...(appOps ? { appOps } : {}), ...(permissions ? { permissions } : {}), ...(inputMethod ? { inputMethod } : {}), ...(files ? { files } : {}), ...(applications ? { applications } : {}), ...(resetApplications ? { resetApplications } : {}), ...(f.description !== undefined ? { description: text(f.description) } : {}), ...(network ? { network } : {}), ...(capture ? { capture } : {}), ...(diagnostics ? { diagnostics } : {}) };
 }
 
 function parseRecovery(value: unknown): RecoveryPolicy {
@@ -301,4 +316,13 @@ function parseRecovery(value: unknown): RecoveryPolicy {
     if (when.kind === 'ui-changed') throw new Error('Recovery guard requires a current-state condition');
     return { description: text(rule.description), when, ...(rule.action !== undefined ? { action: parseAction(rule.action) } : {}), ...(rule.launchPackage !== undefined ? { launchPackage: packageName(rule.launchPackage) } : {}) };
   }) };
+}
+
+export function parseValueName(value: unknown): string {
+  if (typeof value !== 'string' || !/^[A-Za-z][A-Za-z0-9_-]{0,63}$/.test(value)) throw new Error('Invalid value name');
+  return value;
+}
+export function parseValueText(value: unknown): string {
+  if (typeof value !== 'string' || value.includes('\0') || Buffer.from(value, 'utf8').toString('utf8') !== value || Buffer.byteLength(value, 'utf8') > 24000) throw new Error('Value requires at most 24000 UTF-8 bytes without NUL');
+  return value;
 }

@@ -175,6 +175,9 @@ jobs:
           adb -s emulator-5554 install -r .appvanta/input-ime/appvanta-input.apk
           node scripts/verify-adjudicated-input.mjs emulator-5554 unicode branch
           node scripts/verify-adjudicated-input.mjs emulator-5554 unicode nested mcp
+      - name: Verify extracted values and crash continuation
+        timeout-minutes: 5
+        run: node scripts/verify-flow-values.mjs emulator-5554
       - name: Verify application accelerometer callbacks
         timeout-minutes: 4
         run: |
