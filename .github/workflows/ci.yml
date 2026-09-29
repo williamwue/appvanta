@@ -63,6 +63,9 @@ jobs:
         with:
           node-version: 22
           cache: npm
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
       - uses: actions/setup-java@v4
         with:
           distribution: temurin
@@ -142,6 +145,19 @@ jobs:
         run: |
           node packages/cli/dist/index.js install emulator-5554 test-apps/markor.apk
           node packages/cli/dist/index.js run-flow emulator-5554 docs/examples/markor-ci-flow.json
+      - name: Install network capture verifier dependencies
+        timeout-minutes: 5
+        shell: bash
+        run: |
+          python -m venv "$RUNNER_TEMP/appvanta-proxy"
+          "$RUNNER_TEMP/appvanta-proxy/bin/python" -m pip install -r scripts/network-requirements.txt
+          echo "APPVANTA_MITMDUMP=$RUNNER_TEMP/appvanta-proxy/bin/mitmdump" >> "$GITHUB_ENV"
+      - name: Verify interrupted screen pull recovery
+        timeout-minutes: 4
+        run: node scripts/verify-network-capture-recovery.mjs emulator-5554 tcp-pull-disconnect
+      - name: Verify interrupted Perfetto pull recovery
+        timeout-minutes: 4
+        run: node scripts/verify-network-capture-recovery.mjs emulator-5554 tcp-pull-trace-disconnect
       - name: Stage device evidence
         if: always()
         run: node scripts/stage-evidence.mjs .appvanta/runs .appvanta/ci-evidence
