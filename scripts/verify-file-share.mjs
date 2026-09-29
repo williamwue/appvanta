@@ -6,7 +6,7 @@ import { promisify } from 'node:util';
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { resolve, join } from 'node:path';
 import { withDeviceLock, inspectDeviceLock } from '../packages/core/dist/index.js';
-import { AdbDriver, runAndroidFlow } from '../packages/android/dist/index.js';
+import { AdbDriver, runAndroidFlow, parseUiTree } from '../packages/android/dist/index.js';
 import { readMcpResponses } from './mcp-response-reader.mjs';
 
 const device = process.argv[2]; assert(device);
@@ -34,11 +34,32 @@ try {
     await writeFile(join(directory, 'without-grant.json'), JSON.stringify(denied, null, 2));
   });
   const path = join(directory, 'flow.json'); await writeFile(path, JSON.stringify(flow, null, 2));
-  for (const transport of ['cli', 'mcp']) {
+  for (const transport of ['cli', 'mcp', 'resolver-cancel', 'resolver']) {
     await withDeviceLock(device, clearReceiver);
     let result;
     if (transport === 'cli') result = JSON.parse((await promisify(execFile)(process.execPath, ['packages/cli/dist/index.js', 'run-flow', device, path], { windowsHide: true, timeout: 90000, encoding: 'utf8' })).stdout);
-    else {
+    else if (transport === 'resolver' || transport === 'resolver-cancel') {
+      const { packageName, ...unaddressed } = action;
+      const choice = { kind: 'text', value: 'AppVanta Share Receiver', match: 'exact' };
+      const once = { kind: 'text', value: 'Just once', match: 'exact' };
+      result = await runAndroidFlow(device, { name: 'System attachment receiver selection', steps: [
+        { description: 'Open system resolver', action: unaddressed },
+        { description: 'Verify test receiver choice', assertText: choice.value },
+        ...(transport === 'resolver-cancel' ? [
+          { description: 'Dismiss without selecting', action: { kind: 'back' } },
+          { description: 'Source visible after dismiss', assertText: 'AppVanta Share Source' },
+        ] : [
+          { description: 'Select only test receiver', when: { kind: 'target-visible', target: choice }, action: { kind: 'tap', target: choice } },
+          { description: 'Use only this time', when: { kind: 'target-visible', target: once }, action: { kind: 'tap', target: once } },
+          { description: 'Receiver evidence', assertText: 'received' },
+        ]),
+      ] });
+      assert.equal(result.status, 'passed');
+      const xmlPath = result.steps[1].evidence.find(path => path.endsWith('.xml'));
+      const nodes = parseUiTree(await readFile(join(result.runDirectory, xmlPath), 'utf8')).nodes;
+      const chosen = nodes.find(node => node.text === choice.value || node.text === `Share with ${choice.value}`);
+      assert(chosen && ['android', 'com.android.intentresolver'].includes(chosen.packageName), 'Choice must be in the Android system resolver');
+    } else {
       const child = spawn(process.execPath, ['packages/mcp/dist/index.js'], { windowsHide: true, stdio: ['pipe', 'pipe', 'pipe'] });
       const exited = once(child, 'exit'); let stderr = ''; child.stderr.on('data', bytes => { stderr += bytes; });
       try {
@@ -53,6 +74,11 @@ try {
       } finally { child.kill(); await exited; }
     }
     assert.equal(result.status, 'passed');
+    if (transport === 'resolver-cancel') {
+      await adb('shell', 'run-as', receiver, 'test', '!', '-e', 'files/received.json');
+      results.push({ transport, result, delivered: false });
+      continue;
+    }
     const report = await received(); assert.equal(report.uri, uri); assert.equal(report.status, 'received');
     assert.equal(report.mimeType, action.mimeType); assert.equal(report.sha256, sha256); assert.equal(report.bytes, 4096); assert.equal(report.writeDenied, true);
     assert.equal(report.readPermission, 0);
