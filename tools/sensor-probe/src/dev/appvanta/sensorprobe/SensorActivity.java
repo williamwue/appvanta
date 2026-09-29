@@ -18,6 +18,11 @@ public final class SensorActivity extends Activity implements SensorEventListene
   private String session;
   private TextView text;
   private int samples;
+  private float[] baseline;
+  private final int[] previousSign = new int[3];
+  private final long[] previousPeak = new long[3];
+  private long lastDetection;
+  private int detections;
 
   @Override public void onCreate(Bundle state) {
     super.onCreate(state);
@@ -28,6 +33,8 @@ public final class SensorActivity extends Activity implements SensorEventListene
     manager = (SensorManager)getSystemService(SENSOR_SERVICE);
     text = new TextView(this);
     text.setTextSize(20);
+    float density = getResources().getDisplayMetrics().density;
+    text.setPadding((int)(16 * density), (int)(48 * density), (int)(16 * density), (int)(16 * density));
     text.setText("Waiting for acceleration events");
     setContentView(text);
     getWindow().addFlags(128);
@@ -48,7 +55,27 @@ public final class SensorActivity extends Activity implements SensorEventListene
       emit(new JSONObject().put("type", "sample").put("timestampNanos", event.timestamp)
         .put("x", event.values[0]).put("y", event.values[1]).put("z", event.values[2]));
       samples++;
-      text.setText("Acceleration events: " + samples + "\n" + event.values[0] + ":" + event.values[1] + ":" + event.values[2]);
+      if (baseline == null) {
+        baseline = event.values.clone();
+        text.setText("Shake detections: 0");
+      }
+      for (int axis = 0; axis < 3; axis++) {
+        float delta = event.values[axis] - baseline[axis];
+        if (Math.abs(delta) < 8) continue;
+        int sign = delta > 0 ? 1 : -1;
+        if (previousSign[axis] == -sign && event.timestamp - previousPeak[axis] <= 1500000000L
+            && event.timestamp - lastDetection >= 300000000L) {
+          detections++;
+          lastDetection = event.timestamp;
+          previousSign[axis] = 0;
+          emit(new JSONObject().put("type", "shake").put("count", detections)
+            .put("axis", axis).put("timestampNanos", event.timestamp));
+          text.setText("Shake detections: " + detections);
+        } else {
+          previousSign[axis] = sign;
+          previousPeak[axis] = event.timestamp;
+        }
+      }
     } catch (Exception error) { throw new IllegalStateException(error); }
   }
 

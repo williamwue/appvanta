@@ -168,6 +168,8 @@ jobs:
         run: |
           python scripts/build-segment-clock.py --fixture sensor-probe
           node scripts/verify-sensor-events.mjs emulator-5554
+          node scripts/verify-sensor-events.mjs emulator-5554 .appvanta/sensor-probe/appvanta-sensor-probe.apk y
+          node scripts/verify-sensor-events.mjs emulator-5554 .appvanta/sensor-probe/appvanta-sensor-probe.apk z
           node scripts/verify-emulator-shake.mjs emulator-5554
       - name: Verify managed shake and owner crash recovery
         timeout-minutes: 4
