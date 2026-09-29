@@ -8,6 +8,7 @@ export * from "./scheduler.js";
 export * from "./audit.js";
 export * from './audited-change.js';
 export * from "./flow-schema.js";
+export * from './flow-template.js';
 export * from "./flow.js";
 export * from "./device-lock.js";
 export * from "./tasks.js";

@@ -41,6 +41,8 @@ jobs:
       - run: npm test
       - name: Verify visual alignment through CLI and MCP
         run: node scripts/verify-visual-alignment.mjs
+      - name: Verify Flow template CLI compilation
+        run: node scripts/verify-flow-template.mjs
       - run: npm run verify:release-packages
       - name: Verify upgrade from public 0.1.0 snapshot
         timeout-minutes: 8
@@ -155,6 +157,9 @@ jobs:
       - name: Verify observed environment state
         timeout-minutes: 3
         run: node scripts/verify-environment-state.mjs emulator-5554
+      - name: Verify compiled Flow template execution
+        timeout-minutes: 3
+        run: node scripts/verify-flow-template.mjs emulator-5554
       - name: Verify real device screenshot SSIM gate
         timeout-minutes: 3
         run: node scripts/verify-device-visual.mjs emulator-5554

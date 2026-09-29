@@ -6,6 +6,7 @@ import { recoverAndroidFlow, analyzePerfetto, AdbDriver, runAndroidFlow, runAndr
 import { inspectDeviceLock, verifyEvidence, checkPerformanceBaseline, recordedFlow, brand, createRunContext, writeMarkdownReport, compareRuns, exportEvidence, runOnDevices, checkBaseline, withDeviceLock, TaskStore, MonitorStore, BatchStore, AuditLog, auditedStateChange, comparePngScreenshots } from "@appvanta/core";
 import type { Action, AppPackageName, DeviceId, Observation, Target } from "@appvanta/core";
 import { readFlowFile } from './flow-file.js';
+import { compileFlowTemplate } from '@appvanta/core';
 import { inspectFlowProgress, inspectTaskProgress } from '@appvanta/core';
 import { continueAndroidTask } from '@appvanta/android';
 import { listAndroidAvds } from '@appvanta/android';
@@ -33,6 +34,13 @@ try {
 }
 async function dispatch(): Promise<void> {
   switch (command) {
+    case 'compile-flow': {
+      if (args.length !== 2) throw new Error('Usage: compile-flow <template.json> <output.json>');
+      const flow = compileFlowTemplate(JSON.parse(await readFile(resolve(args[0]!), 'utf8')));
+      await writeFile(resolve(args[1]!), JSON.stringify(flow, null, 2) + '\n', { flag: 'wx' });
+      printJson({ status: 'compiled', output: resolve(args[1]!), steps: flow.steps.length });
+      break;
+    }
     case 'restart-adjudicated-task': {
       if (args.length !== 5) throw new Error('Usage: restart-adjudicated-task <predecessor-task-id> <successor-task-id> <receipt.json> <current-lease-token> <checkpoint.json>');
       const receipt = JSON.parse(await readFile(resolve(args[2]!), 'utf8'));
@@ -405,4 +413,4 @@ function requireDevice(serial?: string) {
 }
 
 function printJson(value: unknown): void { console.log(JSON.stringify(value, null, 2)); }
-function printUsage(): void { console.log("AppVanta CLI\n\n  restart-adjudicated-task <predecessor-task-id> <successor-task-id> <receipt.json> <current-lease-token> <checkpoint.json>\n  preview-uncertain-task <task-id>\n  adjudicate-task <task-id> <decision.json>\n  prepare-adjudicated-task <task-id> <expectation.json>\n  reserve-adjudicated-task <task-id> <receipt.json>\n  continue-adjudicated-task <task-id> <receipt.json> [transfer-retry-token]\n  list-avds\n  start-avd <name> [even-port] [timeout-ms] [gpu-mode]\n  continue-task <task-id> <lease-token> <checkpoint.json>\n  inspect-task-progress <task-id>\n  inspect-flow-progress <run-directory>\n  tasks\n  task <task-id>\n  pause-task <task-id>\n  resume-task <task-id>\n  cancel-task <task-id>\n  monitors\n  monitor <monitor-id>\n  release-monitor <monitor-id>\n  batches\n  batch <batch-id>\n  cancel-batch <batch-id>\n  doctor [--fix]\n  list-devices\n  observe <device>\n  install <device> <apk>\n  launch <device> <package-name>\n  run <device> <package-name>\n  run-flow <device> <flow.json|yaml>\n  run-flows <device1,device2,...> <flow.json|yaml> [concurrency]\n  record-interactions <device> <package1,package2> <seconds> [--include-text]\n  visual-diff <baseline.png> <current.png> <diff.png> [channel-threshold] [max-mismatch-ratio] [ignore-regions.json|-] [max-alignment-shift] [min-ssim]\n  logs <device>\n  report <run-directory-or-report.md>"); }
+function printUsage(): void { console.log("AppVanta CLI\n\n  compile-flow <template.json> <output.json>\n  restart-adjudicated-task <predecessor-task-id> <successor-task-id> <receipt.json> <current-lease-token> <checkpoint.json>\n  preview-uncertain-task <task-id>\n  adjudicate-task <task-id> <decision.json>\n  prepare-adjudicated-task <task-id> <expectation.json>\n  reserve-adjudicated-task <task-id> <receipt.json>\n  continue-adjudicated-task <task-id> <receipt.json> [transfer-retry-token]\n  list-avds\n  start-avd <name> [even-port] [timeout-ms] [gpu-mode]\n  continue-task <task-id> <lease-token> <checkpoint.json>\n  inspect-task-progress <task-id>\n  inspect-flow-progress <run-directory>\n  tasks\n  task <task-id>\n  pause-task <task-id>\n  resume-task <task-id>\n  cancel-task <task-id>\n  monitors\n  monitor <monitor-id>\n  release-monitor <monitor-id>\n  batches\n  batch <batch-id>\n  cancel-batch <batch-id>\n  doctor [--fix]\n  list-devices\n  observe <device>\n  install <device> <apk>\n  launch <device> <package-name>\n  run <device> <package-name>\n  run-flow <device> <flow.json|yaml>\n  run-flows <device1,device2,...> <flow.json|yaml> [concurrency]\n  record-interactions <device> <package1,package2> <seconds> [--include-text]\n  visual-diff <baseline.png> <current.png> <diff.png> [channel-threshold] [max-mismatch-ratio] [ignore-regions.json|-] [max-alignment-shift] [min-ssim]\n  logs <device>\n  report <run-directory-or-report.md>"); }

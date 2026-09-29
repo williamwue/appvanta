@@ -1,0 +1,21 @@
+{
+  "version": 1,
+  "name": "Parameterized Markor launch",
+  "variables": { "app": "net.gsantner.markor", "timeout": 10000 },
+  "applications": [{ "$var": "app" }],
+  "fragments": {
+    "launchAndWait": {
+      "parameters": ["package"],
+      "steps": [{
+        "description": "Launch and verify process",
+        "launchPackage": { "$var": "package" },
+        "action": {
+          "kind": "wait",
+          "condition": { "kind": "app-running", "packageName": { "$var": "package" } },
+          "timeoutMs": { "$var": "timeout" }
+        }
+      }]
+    }
+  },
+  "steps": [{ "use": "launchAndWait", "with": { "package": { "$var": "app" } } }]
+}
