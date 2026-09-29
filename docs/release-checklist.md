@@ -2,6 +2,15 @@
 
 当前所有 workspace 包保持 `private: true`，避免在安装、命令入口和升级策略完成前误发布到 npm。源码仓库开源与 npm 发布是两个独立门禁。
 
+## 当前升级候选
+
+四包当前版本为 `0.2.0-alpha.1`；MCP initialize 从安装包的 package.json 读取实际版本，发行目录也从包版本生成。
+`npm run verify:upgrade` 固定以公开初始提交 `93749a0cb87937149376aaac16adf8d199660acb` 的真实 `0.1.0` 源码构建旧 tarball，再在同一临时项目安装当前四包 tarball。
+旧包实际创建两份 v1 任务记录：一份已完成、一份待办且所属进程已退出。升级后读取已完成任务，确认待办被标为 interrupted 而未重新执行；逐字节核对旧记录及未知格式文件，随后验证 CLI、doctor、MCP 实际版本与工具列表，最后卸载并再次核对数据保留。
+旧任务没有 revision 字段；当前读取兼容该格式，不自动重写终结任务。该验收不证明全部数据模式迁移、运行中 Worker 升级或降级兼容。
+本地 Windows 首次验收通过，证据 `.appvanta/upgrade-1790703392581.json`；后续结果位于 `.appvanta/runs/upgrade-*/verification.json`，记录源提交、源码是否有未提交修改和八个 tarball 摘要。
+三系统托管 CI 已接入同一命令，验收结果应绑定实际运行。正式 tag、完整发布报告、其他迁移场景及真机/OEM 门禁仍待完成。
+
 ## 源码仓库门禁
 
 - [x] 选择 Apache-2.0 并加入完整许可证文本。

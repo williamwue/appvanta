@@ -14,6 +14,8 @@ jobs:
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
       - uses: actions/setup-node@v4
         with:
           node-version: 22
@@ -38,6 +40,9 @@ jobs:
       - run: npm run build
       - run: npm test
       - run: npm run verify:release-packages
+      - name: Verify upgrade from public 0.1.0 snapshot
+        timeout-minutes: 8
+        run: npm run verify:upgrade
       - name: Test network recovery helpers
         working-directory: scripts
         run: python -m unittest test_proxy_recovery.py test_network_finalization.py

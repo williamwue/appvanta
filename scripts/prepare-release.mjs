@@ -7,7 +7,8 @@ import { fileURLToPath } from 'node:url';
 import { promisify } from 'node:util';
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
-const output = resolve(process.argv[2] ?? join(root, '.appvanta', 'releases', `0.1.0-${Date.now()}`));
+const productVersion = JSON.parse(await readFile(join(root, 'packages/core/package.json'), 'utf8')).version;
+const output = resolve(process.argv[2] ?? join(root, '.appvanta', 'releases', `${productVersion}-${Date.now()}`));
 const run = (file, args, options = {}) => promisify(execFile)(file, args, { cwd: root, encoding: 'utf8', timeout: 180000, windowsHide: true, ...options });
 const npm = (args, options = {}) => process.env.npm_execpath ? run(process.execPath, [process.env.npm_execpath, ...args], options) : run('npm', args, options);
 

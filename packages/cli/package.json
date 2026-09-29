@@ -1,6 +1,6 @@
 {
   "name": "@appvanta/cli",
-  "version": "0.1.0",
+  "version": "0.2.0-alpha.1",
   "private": true,
   "license": "Apache-2.0",
   "type": "module",
@@ -14,8 +14,8 @@
     "appvanta": "./dist/index.js"
   },
   "dependencies": {
-    "@appvanta/android": "0.1.0",
-    "@appvanta/core": "0.1.0",
+    "@appvanta/android": "0.2.0-alpha.1",
+    "@appvanta/core": "0.2.0-alpha.1",
     "yaml": "2.8.3"
   },
   "scripts": {

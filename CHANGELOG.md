@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+## 0.2.0-alpha.1 - Unreleased
+
+- Add guarded adjudicated continuation, repeated unbound lease transfer recovery, and ASCII/Unicode input replay avoidance checks.
+- Verify interrupted screen and Perfetto file transfers on local API 37 and hosted API 35 emulators.
+- Handle temporary Windows sharing locks when publishing monitor state.
+- Establish upgrade checks against the original public 0.1.0 source snapshot. This remains an experimental candidate; packages are private and physical-device/OEM acceptance is incomplete.
+
 - Verify Android rotation, long press, hardware buttons, power-state restoration, and Unicode clipboard paste on an API 37 emulator.
 - Route paste through the explicitly enabled AppVanta Accessibility service so applications can acknowledge Android `ACTION_PASTE` instead of relying on an injected paste key event.
 

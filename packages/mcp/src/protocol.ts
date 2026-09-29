@@ -1,3 +1,5 @@
+import { readFileSync } from 'node:fs';
+const packageVersion: string = JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8')).version;
 export class ParameterError extends Error {}
 class RpcError extends Error { constructor(readonly code: number, message: string) { super(message); } }
 const object = (value: unknown): value is Record<string, unknown> => !!value && typeof value === 'object' && !Array.isArray(value);
@@ -35,7 +37,7 @@ export function protocolSession(tools: unknown[], call: (name: string | undefine
           || typeof params.clientInfo.name !== 'string' || !params.clientInfo.name || typeof params.clientInfo.version !== 'string' || !params.clientInfo.version) throw new ParameterError('initialize requires protocolVersion, capabilities and clientInfo');
         state = 'initializing';
         // If the requested version is unsupported, advertise the version we implement.
-        return response({ protocolVersion: '2024-11-05', capabilities: { tools: {} }, serverInfo: { name: 'appvanta', version: '0.1.0' } });
+        return response({ protocolVersion: '2024-11-05', capabilities: { tools: {} }, serverInfo: { name: 'appvanta', version: packageVersion } });
       }
       if (state !== 'ready') throw new RpcError(-32002, 'Initialize and send notifications/initialized before tool requests');
       if (value.method === 'tools/list') {
