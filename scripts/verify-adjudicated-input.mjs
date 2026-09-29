@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { randomUUID } from 'node:crypto';
+import { randomUUID, createHash } from 'node:crypto';
 import { AdbDriver, parseUiTree } from '../packages/android/dist/index.js';
 import { startAppOps } from '../packages/android/dist/appops-fixture.js';
 import { spawn, execFile } from 'node:child_process';
@@ -7,13 +7,16 @@ import { once } from 'node:events';
 import { promisify } from 'node:util';
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { resolve, join } from 'node:path';
+import { readMcpResponses } from './mcp-response-reader.mjs';
 import { TaskStore, inspectDeviceLock, withDeviceLock, previewUncertainTaskStep,
   recordUncertainStepAdjudication, prepareAdjudicatedTaskContinuation,
   readAdjudicatedExecution } from '../packages/core/dist/index.js';
 
 const deviceId = process.argv[2];
-if (!deviceId || process.argv[3] && process.argv[3] !== 'unicode') throw new Error('Usage: node scripts/verify-adjudicated-input.mjs <device> [unicode]');
+if (!deviceId || process.argv[3] && process.argv[3] !== 'unicode' || process.argv[4] && process.argv[4] !== 'branch' || process.argv[5] && process.argv[5] !== 'mcp') throw new Error('Usage: node scripts/verify-adjudicated-input.mjs <device> [unicode] [branch] [mcp]');
 const unicode = process.argv[3] === 'unicode';
+const branchMode = process.argv[4] === 'branch';
+const mcp = process.argv[5] === 'mcp';
 const root = resolve(import.meta.dirname, '..');
 const directory = join(root, '.appvanta/runs', `adjudicated-input-${Date.now()}`);
 await mkdir(directory, { recursive: true });
@@ -24,6 +27,7 @@ const inputText = unicode ? `${marker} 中文 café\n特殊字符 ' " & < > %s ;
 const deviceFile = `/storage/emulated/0/Documents/markor/AppVantaNote${randomUUID().replaceAll('-', '')}.txt`;
 const original = 'Original standalone verification note.';
 const editor = { kind: 'resource-id', value: 'net.gsantner.markor:id/document__fragment__edit__highlighting_editor' };
+const branch = { key: 'initial_editor', when: { kind: 'target-visible', target: editor }, equals: true };
 const driver = new AdbDriver({ artifactsDirectory: join(directory, 'observations') });
 const contents = () => adb('exec-out', 'cat', deviceFile);
 const imeState = async () => ({
@@ -49,6 +53,22 @@ const observeWritten = async () => {
 };
 const core = JSON.stringify(new URL('../packages/core/dist/index.js', import.meta.url).href);
 const android = JSON.stringify(new URL('../packages/android/dist/index.js', import.meta.url).href);
+async function mcpCall(name, input) {
+  const child = spawn(process.execPath, ['packages/mcp/dist/index.js'], { cwd: root, windowsHide: true, stdio: ['pipe', 'pipe', 'pipe'] });
+  const exited = once(child, 'exit'); let stderr = ''; child.stderr.on('data', bytes => { stderr += bytes; });
+  try {
+    const ready = readMcpResponses(child.stdout, [1], 10000);
+    child.stdin.write(JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'initialize', params: { protocolVersion: '2024-11-05', capabilities: {}, clientInfo: { name: 'branch-adjudication-verifier', version: '1' } } }) + '\n');
+    await ready;
+    child.stdin.write(JSON.stringify({ jsonrpc: '2.0', method: 'notifications/initialized' }) + '\n');
+    const pending = readMcpResponses(child.stdout, [2], 120000);
+    child.stdin.write(JSON.stringify({ jsonrpc: '2.0', id: 2, method: 'tools/call', params: { name, arguments: input } }) + '\n');
+    const response = (await pending).find(item => item.id === 2);
+    assert(response?.result && !response.result.isError, JSON.stringify({ response, stderr }));
+    await writeFile(join(directory, `${name}.json`), JSON.stringify(response, null, 2));
+    return JSON.parse(response.result.content[0].text);
+  } finally { child.kill(); await exited; }
+}
 async function crashAtMessage(code, inspect) {
   const child = spawn(process.execPath, ['--input-type=module', '-e', code], { cwd: root, windowsHide: true, stdio: ['ignore', 'ignore', 'pipe', 'ipc'] });
   const exit = once(child, 'exit'); let stderr = '';
@@ -82,8 +102,9 @@ try {
     const store = new TaskStore(${JSON.stringify(store.directory)});
     const flow = parseFlow({ name: 'Persistent input side effect', steps: [
       { description: 'Completed editor check', action: { kind: 'wait', condition: { kind: 'target-visible', target: ${JSON.stringify(editor)} }, timeoutMs: 15000 } },
-      { description: 'Input marker once', action: { kind: 'input', target: ${JSON.stringify(editor)}, text: ${JSON.stringify(inputText)} } },
-      { description: 'Save edited note', action: { kind: 'tap', target: { kind: 'accessibility-label', value: 'Save' } } },
+      { description: 'Input marker once', ...${JSON.stringify(branchMode ? { branch } : {})}, action: { kind: 'input', target: ${JSON.stringify(editor)}, text: ${JSON.stringify(inputText)} } },
+      { description: 'Save edited note', ...${JSON.stringify(branchMode ? { branch } : {})}, action: { kind: 'tap', target: { kind: 'accessibility-label', value: 'Save' } } },
+      ...${JSON.stringify(branchMode ? [{ description: 'Unselected alternative', branch: { ...branch, equals: false }, echo: 'must remain unselected' }] : [])},
       { description: 'Final evidence', echo: 'continued without repeating input' }
     ] });
     const task = await store.create(${JSON.stringify(deviceId)}, flow); task.status = 'running'; await store.save(task);
@@ -114,6 +135,15 @@ try {
   const preview = await previewUncertainTaskStep(store, successor.taskId);
   assert.equal(preview.activeStep.description, 'Input marker once');
   assert.equal(preview.completedSteps, 1);
+  if (branchMode) {
+    assert.equal(preview.activeBranches.selected, true);
+    assert.equal(preview.activeBranches.choices.length, 1);
+    const choice = preview.activeBranches.choices[0];
+    const bytes = await readFile(join(preview.runDirectory, choice.path));
+    assert.equal(choice.sha256, createHash('sha256').update(bytes).digest('hex'));
+    assert.equal(choice.decision.source, 'observed');
+    assert.equal(choice.decision.matched, true);
+  }
   assert.equal(await observeWritten(), observed);
   const lease = await inspectDeviceLock(deviceId); assert.equal(lease.owner, 'dead');
   await writeFile(join(directory, 'observed-postcondition.json'), JSON.stringify({ original, observed, interrupted, preview }, null, 2));
@@ -124,16 +154,32 @@ try {
   });
   const expectation = { decisionId: decision.id, previewDigestSha256: preview.previewDigestSha256, leaseToken: lease.lease.token };
   const preparation = await prepareAdjudicatedTaskContinuation(store, successor.taskId, expectation);
+  if (branchMode) {
+    for (const step of preparation.claim.flow.steps.filter(step => step.branch)) assert.equal(step.branch.resolved, true);
+    assert.equal(preparation.claim.flow.steps.filter(step => step.branch).length, 2);
+  }
   const receipt = { ...expectation, preparationId: preparation.claim.id, preparationDigestSha256: preparation.preparationDigestSha256 };
   const receiptPath = join(directory, 'receipt.json'); await writeFile(receiptPath, JSON.stringify(receipt));
-  await promisify(execFile)(process.execPath, ['packages/cli/dist/index.js', 'reserve-adjudicated-task', successor.taskId, receiptPath], { cwd: root, windowsHide: true, timeout: 30000, encoding: 'utf8' });
-  const executed = await promisify(execFile)(process.execPath, ['packages/cli/dist/index.js', 'continue-adjudicated-task', successor.taskId, receiptPath], { cwd: root, windowsHide: true, timeout: 120000, encoding: 'utf8' });
-  const result = JSON.parse(executed.stdout); assert.equal(result.status, 'passed');
+  let result;
+  if (mcp) {
+    await mcpCall('reserve_adjudicated_task', { taskId: successor.taskId, receipt });
+    result = await mcpCall('continue_adjudicated_task', { taskId: successor.taskId, receipt });
+  } else {
+    await promisify(execFile)(process.execPath, ['packages/cli/dist/index.js', 'reserve-adjudicated-task', successor.taskId, receiptPath], { cwd: root, windowsHide: true, timeout: 30000, encoding: 'utf8' });
+    const executed = await promisify(execFile)(process.execPath, ['packages/cli/dist/index.js', 'continue-adjudicated-task', successor.taskId, receiptPath], { cwd: root, windowsHide: true, timeout: 120000, encoding: 'utf8' });
+    result = JSON.parse(executed.stdout);
+  }
+  assert.equal(result.status, 'passed');
   const lineage = await readAdjudicatedExecution(store, successor.taskId, result.taskId, receipt);
   const steps = (await readFile(join(result.runDirectory, 'steps.jsonl'), 'utf8')).trim().split(/\r?\n/).map(JSON.parse);
   assert(!steps.some(step => step.description === 'Input marker once' || step.description === 'Completed editor check'));
   assert(steps.some(step => step.description === 'Final evidence' && step.status === 'passed'));
   assert(steps.some(step => step.description === 'Save edited note' && step.status === 'passed'));
+  if (branchMode) {
+    assert(steps.some(step => step.description === 'Unselected alternative' && step.status === 'skipped'));
+    const choice = JSON.parse(await readFile(join(result.runDirectory, 'branch-initial_editor.json'), 'utf8'));
+    assert.equal(choice.source, 'resolved'); assert.equal(choice.matched, true);
+  }
   assert.equal(await contents(), observed, 'Adjudication must not repeat input');
   assert.deepEqual(await imeState(), imeBefore);
   assert.equal(await inspectDeviceLock(deviceId), null);
@@ -143,7 +189,7 @@ try {
     await adb('shell', 'rm', deviceFile);
     await storage.stop();
   });
-  const evidence = { status: 'passed', deviceId, deviceFile, unicode, inputText, imeBefore, imeAfter: await imeState(), original, observed, sourceTaskId: source.taskId, interruptedTaskId: successor.taskId, result, lineage, ownedNoteRemoved: true,
+  const evidence = { status: 'passed', deviceId, deviceFile, unicode, branchMode, transport: mcp ? 'mcp' : 'cli', inputText, imeBefore, imeAfter: await imeState(), original, observed, sourceTaskId: source.taskId, interruptedTaskId: successor.taskId, result, lineage, ownedNoteRemoved: true,
     limitation: 'Verifier pauses after the real driver action returns, before Flow persists completion. Persisted note bytes and a live text-visible checkpoint verify the marker. Only this Markor input payload is covered; no concurrent external editor or crash inside the IME bridge is simulated.' };
   await writeFile(join(directory, 'verification.json'), JSON.stringify(evidence, null, 2));
   console.log(JSON.stringify({ status: 'passed', directory }));

@@ -168,6 +168,11 @@ jobs:
         run: |
           node scripts/verify-flow-branch.mjs emulator-5554
           node scripts/verify-flow-branch.mjs emulator-5554 nested
+      - name: Verify branch adjudication after committed Unicode input
+        timeout-minutes: 5
+        run: |
+          node scripts/verify-adjudicated-input.mjs emulator-5554 unicode branch
+          node scripts/verify-adjudicated-input.mjs emulator-5554 unicode branch mcp
       - name: Verify application accelerometer callbacks
         timeout-minutes: 4
         run: |

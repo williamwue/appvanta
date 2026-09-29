@@ -14,7 +14,7 @@ API 37 / Android 17 已验证裁决后步骤边界再次崩溃、只读等待执
 
 后续公开快照 `3957caf` 的 [CI](https://github.com/williamwue/appvanta/actions/runs/36604519328) 已通过 Linux/API 35 录屏和 Perfetto 拉取中断恢复，以及 Linux/macOS 构建测试；Windows 监控 Worker 转移记录时 EPERM，整次运行失败。本地已用真实 Windows 文件共享占用复现同类错误，为监控记录原子发布增加约 2 秒的有界重试。短暂占用后转移成功，持续占用仍失败且原所有权记录不变；四包构建、core 97、Android 74、脚本 38 项共 209 项测试通过。该修正的托管验收须以对应新提交结果为准。
 
-本轮分支裁决修订：构建及完整回归 248 项通过（core 121、Android 87、脚本 40），包含测试 Driver 下首次分支动作执行中强杀后的证据固定、缺失拒绝及裁决准备的字节变更拒绝。日志位于集成工作区 `.appvanta/active-branch-build.log` 和 `.appvanta/active-branch-full-tests.log`；本轮新增路径尚无 Android CLI/MCP 完整验收。
+本轮分支裁决修订：构建及完整回归 248 项通过（core 121、Android 87、脚本 40），包含测试 Driver 下首次分支动作执行中强杀后的证据固定、缺失拒绝及裁决准备的字节变更拒绝。日志位于集成工作区 `.appvanta/active-branch-build.log` 和 `.appvanta/active-branch-full-tests.log`；后续 API 37 Markor Unicode 输入的分支裁决已通过 CLI/MCP 预约及执行验证，详见 flow-templates.md；该场景不等于任意分支或应用均已验收。
 
 当前已确认托管通过的是公开快照 `16c9288`（本地 `d99d759`），[运行 36623624410](https://github.com/williamwue/appvanta/actions/runs/36623624410) 的三系统任务及 API 35 模拟器任务均成功，含嵌套分支；本轮未下载核验该运行的归档。该结果不代表后续分支裁决修订。
 
@@ -88,7 +88,7 @@ API 37 / Android 17 已验证裁决后步骤边界再次崩溃、只读等待执
 
 ## P2：工程化与客户端接入
 
-- [ ] Flow 变量、条件、子流程和组合复用。类型化变量、参数化子流程、逐步骤 when、单次判断的 branch、模板 then/else 与嵌套分支编译已有实现；判断证据、跳过步骤续跑、嵌套决定在续跑时固定及实际动作回放已补验证。首次未完成分支的裁决预览及准备已绑定决定内容、原始字节摘要和缺失状态，真实宿主强杀测试通过；该路径的 Android CLI/MCP 闭环、动态提取值和完整客户端验收仍待完成，见 flow-templates.md。
+- [ ] Flow 变量、条件、子流程和组合复用。类型化变量、参数化子流程、逐步骤 when、单次判断的 branch、模板 then/else 与嵌套分支编译已有实现；判断证据、跳过步骤续跑、嵌套决定在续跑时固定及实际动作回放已补验证。首次未完成分支的裁决预览及准备已绑定决定内容、原始字节摘要和缺失状态，真实宿主强杀测试通过；API 37 Markor Unicode 输入后经 CLI/MCP 预约及执行已通过。嵌套分支执行中断、动态提取值和完整客户端验收仍待完成，见 flow-templates.md。
 - [ ] 手动录制的复杂控件、Canvas、多点、硬件键与真机回放。
 - [ ] 异步批次和监控 Worker 崩溃恢复、优先级、网络并发；监控日志/指标采样。
 - [ ] 交互式计划修订；续跑 Webhook、自定义 hook 和持久通知投递。

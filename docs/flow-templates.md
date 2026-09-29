@@ -61,7 +61,9 @@ appvanta run-flow emulator-5554 compiled-branch.json
 
 首个分支步骤尚未完成时，裁决预览包含已落盘的可达分支决定、原始字节摘要，以及尚未生成的决定。裁决准备只能使用同一预览中的已验证决定，将剩余同 key 选择器固定；预览后创建或改写决定文件会使原裁决失效。可达选择缺失时仍拒绝准备。准备记录保持 `resumeAuthorized: false`，实际续跑仍需现有租约、资源恢复和现场检查点门禁。
 
-本地回归覆盖首次分支动作执行中的真实宿主进程强杀、保留原决定、缺失证据拒绝，以及任务裁决记录对决定字节变化的拒绝。强杀测试使用测试 Driver；此新增分支裁决路径的 Android CLI/MCP 完整闭环仍待验收。
+本地回归覆盖首次分支动作执行中的真实宿主进程强杀、保留原决定、缺失证据拒绝，以及任务裁决记录对决定字节变化的拒绝。核心强杀测试使用测试 Driver。API 37 另已通过 Markor Unicode 输入后的真实进程强杀与裁决：独立核对编辑器全文仅写入一次，再经 CLI 或 MCP 预约和续跑，剩余保存沿用原分支，另一分支跳过，最终文件全文一致、输入法及 AppOps 恢复、租约释放。预览、决定和准备通过核心 API 创建；预约和执行分别走真实 CLI/MCP。嵌套分支动作中断、分支条件变化、IME 内部强杀及其他应用仍待验收。
+
+命令：`node scripts/verify-adjudicated-input.mjs emulator-5554 unicode branch [mcp]`。本地证据：`.appvanta/runs/adjudicated-input-1790713214233/verification.json`（CLI）及 `.appvanta/runs/adjudicated-input-1790713277211/verification.json`（MCP）。两条命令已加入托管 Android CI；新增步骤是否通过须核对对应修订的运行结果。
 
 验证：core 专项使用变化的假设备状态证明只查询一次，并验证篡改拒绝、错误停止和真实宿主强杀后的决定固定。API 37 的 `flow-branch-1790711504339/verification.json` 验证 CLI/MCP 均产生 skipped/skipped/passed/passed 四步结果，未选中动作没有执行。四包构建及 core 111、Android 87、脚本 40 项共 238 项测试通过。设备验收已加入托管 CI，结果需绑定对应后续提交。
 
