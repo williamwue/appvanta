@@ -13,3 +13,5 @@ Android Emulator 的 [sensor 控制台接口](https://developer.android.com/stud
 尚未完成：任意应用摇动检测器响应、Flow/MCP 动作及标准恢复入口接入、宿主强杀与设备断连恢复、外部冲突实测、多轴/多设备和真机/OEM。当前不得把单一探针成功当作完整产品摇动能力已验收。
 
 最终脚本 API 37 复验：`sensor-events-1790708604781/verification.json`，105 条应用事件；40 项脚本测试通过。上述回调事件不依赖截图/OCR 或控制台读数推断，而来自测试应用的 `SensorEventListener`。
+
+API 35 托管验收：公开快照 `7b65ebc`（本地 `06464fa`）的 [运行 36616671566](https://github.com/williamwue/appvanta/actions/runs/36616671566) 中 `Verify application accelerometer callbacks` 步骤通过，Android 任务及三个桌面系统任务均成功。当前已核验步骤结果，尚未下载独立核验该次原始事件归档；此结果仍不覆盖上述待办边界。

@@ -7,6 +7,9 @@ import { createHash } from 'node:crypto';
 import { promisify } from 'node:util';
 
 const scenario = process.argv[2];
+const started = performance.now();
+const milestone = phase => console.error(JSON.stringify({ scenario, phase, elapsedMs: Math.round(performance.now() - started) }));
+milestone('fixture-started');
 const calls = [];
 let proxyChanged = false;
 let denyUpgrade = false;
@@ -54,6 +57,7 @@ const { runAndroidFlow } = await import('../../dist/flow.js');
 const { recoverAndroidFlow } = await import('../../dist/recover-flow.js');
 const { inspectDeviceLock, retainDeviceLockForCleanup, withDeviceLock } = await import('../../../core/dist/index.js');
 const { execFile } = await import('node:child_process');
+milestone('modules-loaded');
 const locks = join(process.cwd(), 'locks');
 process.env.APPVANTA_LOCK_DIRECTORY = locks;
 if (scenario === 'unbound-nested-unsafe') {
@@ -72,10 +76,12 @@ if (scenario === 'unbound-nested-unsafe') {
   assert.equal(proxyChanged, true);
   assert.match(await fs.readFile(join(locks, 'audit.jsonl'), 'utf8'), /admission journal.*unresolved/);
   console.log(`${scenario}: passed`);
+  milestone('finished');
 } else {
 let run;
 const input = { name: 'nested recovery guard', steps: [{ description: 'note', echo: 'ok' }] };
 const flowWork = runAndroidFlow('device', input, undefined, async root => {
+  milestone('run-bound');
   run = root;
   if (scenario === 'callback-marker-denied') {
     await fs.writeFile(join(root, 'flow.json'), JSON.stringify(input));
@@ -109,6 +115,7 @@ const flowWork = runAndroidFlow('device', input, undefined, async root => {
   }
 });
 const result = scenario === 'marker-upgrade-denied' || scenario === 'callback-marker-denied' ? await assert.rejects(flowWork, scenario === 'marker-upgrade-denied' ? /remains exclusive/ : /pre-Flow failure evidence both failed/) : await flowWork;
+milestone('flow-settled');
 if (result) {
   assert.equal(result.status, 'passed');
   assert.equal(result.cleanupFailed, false);
@@ -135,6 +142,7 @@ if (scenario === 'legacy-version-1') {
   state = await inspectDeviceLock('device', locks);
 }
 const beforeRecovery = calls.length;
+milestone('recovery-started');
 if (scenario === 'nested-unsafe' || scenario === 'marker-upgrade-denied' || scenario === 'callback-marker-denied' || scenario.startsWith('journal-')) {
   await assert.rejects(recoverAndroidFlow('device', state.lease.token), { code: 'APPVANTA_MANUAL_RECOVERY_REQUIRED' });
   assert.equal(calls.length, beforeRecovery, 'unsafe nested recovery must not issue device commands');
@@ -155,4 +163,5 @@ if (scenario === 'nested-unsafe' || scenario === 'marker-upgrade-denied' || scen
   assert.equal(proxyChanged, false);
 }
 console.log(`${scenario}: passed`);
+milestone('finished');
 }
