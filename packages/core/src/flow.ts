@@ -1,4 +1,5 @@
 import { recordingDriver } from './recording.js';
+import { BranchDecisions } from './branch-decision.js';
 import { fingerprintProgressEvidence, type ProgressEvidenceHashes } from './flow-progress.js';
 import { recoverStep } from './recovery.js';
 import { createHash, randomUUID } from 'node:crypto';
@@ -44,6 +45,7 @@ export interface FlowCaptureSession {
 export async function executeFlow({ context, driver, flow, signal, resetAppData, startNetwork, startCapture, startDiagnostics, collectEnvironment, startFixtures, startInputMethod, startPermissions, startAppOps, drainInstructions, finishInstruction, beforeStep, restoreActionState }: FlowOptions) {
   const root = context.rootDirectory;
   const deviceId = context.device.id;
+  const branches = new BranchDecisions(root);
   const steps: ReportStep[] = [];
   let recordingStep = 0;
   driver = await recordingDriver(driver, root, () => recordingStep);
@@ -130,7 +132,8 @@ export async function executeFlow({ context, driver, flow, signal, resetAppData,
       const recoveryEvidence: string[] = [];
       const conditionEvidence: string[] = [];
       let conditionMatched: boolean | undefined;
-      let conditionAccepted = !definition.when;
+      let branchMatched: boolean | undefined;
+      let conditionAccepted = !definition.when && !definition.branch;
       let marked = false;
       const verify = async () => {
         const deadline = Date.now() + (definition.timeoutMs ?? 5000);
@@ -152,6 +155,18 @@ export async function executeFlow({ context, driver, flow, signal, resetAppData,
         marked = true;
         observation = await driver.observe(deviceId);
         await context.evidence.saveObservation(`before-${index + 1}`, observation);
+        if (definition.branch) {
+          const branch = await branches.choose(definition.branch, () => driver.checkCondition(deviceId, definition.branch!.when, observation));
+          branchMatched = branch.matched;
+          conditionEvidence.push(branch.path, ...evidence(observation));
+          signal?.throwIfAborted();
+          if (!branchMatched) {
+            await append({ index: index + 1, description: definition.description, status: 'skipped', branchMatched, message: 'Branch was not selected; no operations or checkpoints executed', evidence: conditionEvidence, durationMs: Date.now() - started });
+            if (next.instructionId) await finishInstruction?.(next.instructionId, 'applied');
+            continue;
+          }
+          conditionAccepted = !definition.when;
+        }
         if (definition.when) {
           conditionMatched = await driver.checkCondition(deviceId, definition.when, observation);
           if (typeof conditionMatched !== 'boolean') throw new Error('Condition driver must return a boolean');
@@ -161,7 +176,7 @@ export async function executeFlow({ context, driver, flow, signal, resetAppData,
           conditionEvidence.push(path, ...evidence(observation));
           signal?.throwIfAborted();
           if (!conditionMatched) {
-            await append({ index: index + 1, description: definition.description, status: 'skipped', conditionMatched, message: 'Step condition was false; no operations or checkpoints executed', evidence: [...evidence(observation), ...conditionEvidence], durationMs: Date.now() - started });
+            await append({ index: index + 1, description: definition.description, status: 'skipped', conditionMatched, ...(branchMatched !== undefined ? { branchMatched } : {}), message: 'Step condition was false; no operations or checkpoints executed', evidence: [...evidence(observation), ...conditionEvidence], durationMs: Date.now() - started });
             if (next.instructionId) await finishInstruction?.(next.instructionId, 'applied');
             continue;
           }
@@ -175,7 +190,7 @@ export async function executeFlow({ context, driver, flow, signal, resetAppData,
         }
         await verify();
         signal?.throwIfAborted();
-        await append({ index: index + 1, description: definition.description, status: 'passed', ...(conditionMatched !== undefined ? { conditionMatched } : {}), ...(definition.echo ? { output: definition.echo } : {}), evidence: [...evidence(observation), ...conditionEvidence], durationMs: Date.now() - started });
+        await append({ index: index + 1, description: definition.description, status: 'passed', ...(branchMatched !== undefined ? { branchMatched } : {}), ...(conditionMatched !== undefined ? { conditionMatched } : {}), ...(definition.echo ? { output: definition.echo } : {}), evidence: [...evidence(observation), ...conditionEvidence], durationMs: Date.now() - started });
         if (next.instructionId) await finishInstruction?.(next.instructionId, 'applied');
       } catch (error) {
         const restorationUnverified = !!error && typeof error === 'object' && 'code' in error && error.code === 'APPVANTA_RESTORATION_UNVERIFIED';
@@ -204,7 +219,7 @@ export async function executeFlow({ context, driver, flow, signal, resetAppData,
           }
         }
         await append({ index: index + 1, description: definition.description, status: signal?.aborted ? 'cancelled' : recovered ? 'passed' : 'failed', message,
-          ...(conditionMatched !== undefined ? { conditionMatched } : {}), evidence: [...new Set([...evidence(observation), ...recoveryEvidence, ...conditionEvidence])], durationMs: Date.now() - started });
+          ...(branchMatched !== undefined ? { branchMatched } : {}), ...(conditionMatched !== undefined ? { conditionMatched } : {}), evidence: [...new Set([...evidence(observation), ...recoveryEvidence, ...conditionEvidence])], durationMs: Date.now() - started });
         if (next.instructionId) await finishInstruction?.(next.instructionId, recovered ? 'applied' : 'failed', message);
         if (recovered && !signal?.aborted) continue;
         break;

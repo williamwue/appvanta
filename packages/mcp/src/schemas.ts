@@ -24,6 +24,7 @@ const conditions = [
 ];
 const present = (names: string[]) => ({ anyOf: names.map(name => ({ required: [name] })) });
 const stepProperties = {
+  branch: object({ key: { type: 'string', pattern: '^[A-Za-z][A-Za-z0-9_-]{0,63}$' }, when: { oneOf: conditions.filter(condition => (condition.properties as Record<string, { const?: string }>).kind?.const !== 'screen-stable') }, equals: { type: 'boolean' }, resolved: { type: 'boolean' } }, ['key', 'when', 'equals']),
   when: { oneOf: conditions.filter(condition => (condition.properties as Record<string, { const?: string }>).kind?.const !== 'screen-stable') },
   description: string, action: ref('action'), launchPackage: packageName,
   openUrl: { type: 'string', format: 'http-url' },

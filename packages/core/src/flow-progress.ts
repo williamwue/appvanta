@@ -4,6 +4,7 @@ import { isAbsolute, join, relative, resolve } from 'node:path';
 import { isDeepStrictEqual } from 'node:util';
 import { parseFlow, parseCondition, type FlowStep } from './flow-schema.js';
 import { validateCompletedCondition } from './step-condition.js';
+import { freezeCompletedBranches } from './branch-decision.js';
 import type { TaskInstructionRecord } from './task-instructions.js';
 
 export type ProgressEvidenceHashes = Record<string, { sha256: string; bytes: number }>;
@@ -128,7 +129,7 @@ export async function prepareFlowContinuation(root: string, checkpoint: unknown,
   const { resetApplications: omittedResets, steps: _steps, ...configuration } = flow;
   const continuation = parseFlow({ ...configuration, name: `Continue: ${flow.name}`, steps: [
     { description: 'Verify continuation checkpoint', action: { kind: 'wait', condition, timeoutMs } },
-    ...remaining.map(item => item.step),
+    ...await freezeCompletedBranches(root, snapshot.completed, remaining.map(item => item.step)),
   ] });
   return { flow: continuation, source: { runDirectory: await realpath(root), revision: inspection.revision,
     flowSha256: snapshot.flowSha256 as string, completedSteps: inspection.completedSteps },
@@ -153,9 +154,12 @@ export async function prepareAdjudicatedFlowContinuation(root: string, checkpoin
     ...snapshot.pending,
   ];
   const { resetApplications: omittedResets, steps: _steps, ...configuration } = flow;
+  if (snapshot.active.step.branch && !snapshot.completed.some((entry: { item: { step: FlowStep } }) => entry.item.step.branch?.key === snapshot.active.step.branch.key)) {
+    throw new Error('Cannot adjudicate an unfinished initial branch decision; its remaining choice is not verified');
+  }
   const continuation = parseFlow({ ...configuration, name: `Continue after adjudication: ${flow.name}`, steps: [
     { description: 'Verify adjudicated postcondition on live device', action: { kind: 'wait', condition, timeoutMs } },
-    ...remaining.map(item => item.step),
+    ...await freezeCompletedBranches(root, snapshot.completed, remaining.map(item => item.step)),
   ] });
   return { flow: continuation, source: { runDirectory: await realpath(root), revision: inspection.revision,
     flowSha256: snapshot.flowSha256 as string, completedSteps: inspection.completedSteps,

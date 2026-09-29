@@ -27,7 +27,24 @@ appvanta run-flow emulator-5554 compiled.json
 
 每次判断保存 `condition-N.json`、判断前的观察证据和 `conditionMatched` 报告字段；进度检查验证决定与原步骤、报告和证据摘要一致。已完成的跳过步骤不会进入边界续跑计划。判断/执行中崩溃仍是不确定步骤，需要现有显式裁决流程。录制回放只包含当次实际动作，将跳过步骤转为说明性 echo，不重新判断条件或补执行原动作。
 
-这是逐步骤条件执行；尚不提供单次判断选取整个 then/else 子流程的复合分支。不要用两个会分别重新观察状态的条件步骤声称实现了同一次分支选择。
+`when` 仍是逐步骤条件执行。需要复用同一次选择时，使用下述 `branch`；模板级 `then/else` 语法和嵌套分支编译尚待接入，不能用两个独立 `when` 代替一次分支选择。
+
+## 持久分支决定
+
+步骤可指定 `branch: { key, when, equals }`。相同 key 的条件只在首次到达时查询一次，并在任何动作前以独占创建和 fsync 写入 `branch-<key>.json`；后续步骤复用该决定。`equals: true` 表示选择真分支，`equals: false` 表示选择假分支。同 key 必须声明相同条件，key 只允许字母开头及字母、数字、下划线、连字符，最多 64 字符。
+
+```json
+{"name":"One decision","steps":[
+  {"description":"Then","branch":{"key":"running","when":{"kind":"app-running","packageName":"net.gsantner.markor"},"equals":true},"echo":"App was running at branch entry"},
+  {"description":"Else","branch":{"key":"running","when":{"kind":"app-running","packageName":"net.gsantner.markor"},"equals":false},"echo":"App was absent at branch entry"}
+]}
+```
+
+未选中步骤记录 `skipped` 和 `branchMatched: false`，不执行其 `when`、动作、检查点或业务恢复。选中步骤仍可使用自身的 `when`。分支查询错误不当作假值。报告引用共享决定和观察证据，进度校验和录制回放都会核验选择及证据；回放只保留已执行动作。
+
+安全边界续跑从已完成步骤的已校验证据读取决定，将剩余同 key 步骤写为 `branch.resolved`，不会因设备当前状态变化而重新选分支。回执标记 `source: resolved`，区别于现场查询的 `observed`。显式提交含 `resolved` 的 Flow 也会固定选择，不会查询设备；该字段不声称现场条件为真。首个分支步骤尚未完成且无已验证的同 key 决定时，裁决续跑暂时拒绝，以免跳过不确定动作后重新选路；嵌套分支和此边界的进一步处理仍待完成。
+
+验证：core 专项使用变化的假设备状态证明只查询一次，并验证篡改拒绝、错误停止和真实宿主强杀后的决定固定。API 37 的 `flow-branch-1790711504339/verification.json` 验证 CLI/MCP 均产生 skipped/skipped/passed/passed 四步结果，未选中动作没有执行。四包构建及 core 111、Android 87、脚本 40 项共 238 项测试通过。设备验收已加入托管 CI，结果需绑定对应后续提交。
 
 条件执行的本地 API 37 CLI/MCP 联合证据为 `.appvanta/runs/flow-template-1790707446034/verification.json`，两条入口均产生 passed/skipped/passed 三步结果且清理成功。四包构建及 221 项完整测试通过，专项还验证了跳过后的真实宿主强杀、边界续跑计划与条件证据篡改拒绝。此前不含条件的模板提交 `36f8749` 已在托管运行 `36613274689` 四项通过；条件实现需等待自己的托管验收。
 

@@ -12,6 +12,7 @@ export interface NetworkConfig { readonly python: string; readonly mitmdump: str
 export interface RecoveryRule { readonly description: string; readonly when: Condition; readonly action?: Action; readonly launchPackage?: string }
 export interface RecoveryPolicy { readonly maxAttempts: number; readonly rules: readonly RecoveryRule[] }
 export interface FlowStep {
+  readonly branch?: { readonly key: string; readonly when: Condition; readonly equals: boolean; readonly resolved?: boolean };
   readonly when?: Condition;
   readonly recovery?: RecoveryPolicy;
   readonly description: string;
@@ -178,7 +179,16 @@ export function parseFlow(value: unknown): FlowDefinition {
   if (f.version !== undefined && f.version !== 1) throw new Error('Unsupported Flow version');
   if (!Array.isArray(f.steps) || !f.steps.length) throw new Error('Flow requires non-empty steps');
   const steps = f.steps.map((value): FlowStep => {
-    const s = object(value); keys(s, ['description', 'action', 'launchPackage', 'openUrl', 'assertText', 'assertTarget', 'timeoutMs', 'recovery', 'echo', 'when']);
+    const s = object(value); keys(s, ['description', 'action', 'launchPackage', 'openUrl', 'assertText', 'assertTarget', 'timeoutMs', 'recovery', 'echo', 'when', 'branch']);
+    let branch: FlowStep['branch'];
+    if (s.branch !== undefined) {
+      const b = object(s.branch); keys(b, ['key', 'when', 'equals', 'resolved']);
+      if (typeof b.key !== 'string' || !/^[A-Za-z][A-Za-z0-9_-]{0,63}$/.test(b.key) || typeof b.equals !== 'boolean'
+        || (b.resolved !== undefined && typeof b.resolved !== 'boolean')) throw new Error('Invalid branch selector');
+      const condition = parseCondition(b.when);
+      if (condition.kind === 'ui-changed' || condition.kind === 'screen-stable') throw new Error('Branch requires a point-in-time condition');
+      branch = { key: b.key, when: condition, equals: b.equals, ...(b.resolved !== undefined ? { resolved: b.resolved } : {}) };
+    }
     const when = s.when === undefined ? undefined : parseCondition(s.when);
     if (when?.kind === 'ui-changed' || when?.kind === 'screen-stable') throw new Error('Step condition requires a point-in-time application state');
     if (!['action', 'launchPackage', 'openUrl', 'assertText', 'assertTarget', 'echo'].some(k => s[k] !== undefined)) throw new Error('Empty Flow step');
@@ -190,8 +200,14 @@ export function parseFlow(value: unknown): FlowDefinition {
     if (recovery && s.assertText === undefined && s.assertTarget === undefined) throw new Error('Recovery requires a step checkpoint');
     const echo = s.echo === undefined ? undefined : text(s.echo);
     if (echo && Buffer.byteLength(echo, 'utf8') > 10000) throw new Error('Echo must be at most 10000 UTF-8 bytes');
-    return { ...(when ? { when } : {}), ...(recovery ? { recovery } : {}), description: text(s.description), ...(s.action !== undefined ? { action: parseAction(s.action) } : {}), ...(s.launchPackage !== undefined ? { launchPackage: packageName(s.launchPackage) } : {}), ...(openUrl ? { openUrl } : {}), ...(echo ? { echo } : {}), ...(s.assertText !== undefined ? { assertText: text(s.assertText) } : {}), ...(assertTarget ? { assertTarget } : {}), ...(s.timeoutMs !== undefined ? { timeoutMs: number(s.timeoutMs, 1, 3600000) } : {}) };
+    return { ...(branch ? { branch } : {}), ...(when ? { when } : {}), ...(recovery ? { recovery } : {}), description: text(s.description), ...(s.action !== undefined ? { action: parseAction(s.action) } : {}), ...(s.launchPackage !== undefined ? { launchPackage: packageName(s.launchPackage) } : {}), ...(openUrl ? { openUrl } : {}), ...(echo ? { echo } : {}), ...(s.assertText !== undefined ? { assertText: text(s.assertText) } : {}), ...(assertTarget ? { assertTarget } : {}), ...(s.timeoutMs !== undefined ? { timeoutMs: number(s.timeoutMs, 1, 3600000) } : {}) };
   });
+  const branches = new Map<string, string>();
+  for (const step of steps) if (step.branch) {
+    const signature = JSON.stringify({ when: step.branch.when, resolved: step.branch.resolved });
+    if (branches.has(step.branch.key) && branches.get(step.branch.key) !== signature) throw new Error('Branch key has inconsistent conditions or resolved values');
+    branches.set(step.branch.key, signature);
+  }
   let appOps: AppOpFixture[] | undefined;
   if (f.appOps !== undefined) {
     if (!Array.isArray(f.appOps) || !f.appOps.length || f.appOps.length > 20) throw new Error('appOps requires 1 to 20 settings');

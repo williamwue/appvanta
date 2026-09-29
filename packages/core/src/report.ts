@@ -11,6 +11,7 @@ export interface ReportStep {
   readonly message?: string;
   readonly output?: string;
   readonly conditionMatched?: boolean;
+  readonly branchMatched?: boolean;
 }
 
 export interface RunReportInput {
