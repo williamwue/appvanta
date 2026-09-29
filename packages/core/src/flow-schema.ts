@@ -11,8 +11,9 @@ export interface CaptureConfig { readonly screenSeconds?: number; readonly scree
 export interface NetworkConfig { readonly python: string; readonly mitmdump: string; readonly port?: number; readonly mapRemote?: string; readonly upstreamCa?: string }
 export interface RecoveryRule { readonly description: string; readonly when: Condition; readonly action?: Action; readonly launchPackage?: string }
 export interface RecoveryPolicy { readonly maxAttempts: number; readonly rules: readonly RecoveryRule[] }
+export interface BranchSelector { readonly key: string; readonly when: Condition; readonly equals: boolean; readonly resolved?: boolean }
 export interface FlowStep {
-  readonly branch?: { readonly key: string; readonly when: Condition; readonly equals: boolean; readonly resolved?: boolean };
+  readonly branch?: BranchSelector & { readonly parents?: readonly BranchSelector[] };
   readonly when?: Condition;
   readonly recovery?: RecoveryPolicy;
   readonly description: string;
@@ -174,6 +175,15 @@ export function parseNetworkConfig(value: unknown): NetworkConfig | undefined {
   const n = object(value); keys(n, ['python', 'mitmdump', 'port', 'mapRemote', 'upstreamCa']);
   return { python: text(n.python), mitmdump: text(n.mitmdump), ...(n.port !== undefined ? { port: number(n.port, 1024, 65535) } : {}), ...(n.mapRemote !== undefined ? { mapRemote: text(n.mapRemote) } : {}), ...(n.upstreamCa !== undefined ? { upstreamCa: text(n.upstreamCa) } : {}) };
 }
+function parseBranchSelector(value: unknown): BranchSelector {
+  const b = object(value); keys(b, ['key', 'when', 'equals', 'resolved']);
+  if (typeof b.key !== 'string' || !/^[A-Za-z][A-Za-z0-9_-]{0,63}$/.test(b.key) || typeof b.equals !== 'boolean'
+    || (b.resolved !== undefined && typeof b.resolved !== 'boolean')) throw new Error('Invalid branch selector');
+  const condition = parseCondition(b.when);
+  if (condition.kind === 'ui-changed' || condition.kind === 'screen-stable') throw new Error('Branch requires a point-in-time condition');
+  return { key: b.key, when: condition, equals: b.equals, ...(b.resolved !== undefined ? { resolved: b.resolved } : {}) };
+}
+
 export function parseFlow(value: unknown): FlowDefinition {
   const f = object(value); keys(f, ['version', 'appOps', 'permissions', 'inputMethod', 'files', 'applications', 'resetApplications', 'name', 'description', 'network', 'capture', 'diagnostics', 'steps']);
   if (f.version !== undefined && f.version !== 1) throw new Error('Unsupported Flow version');
@@ -182,12 +192,11 @@ export function parseFlow(value: unknown): FlowDefinition {
     const s = object(value); keys(s, ['description', 'action', 'launchPackage', 'openUrl', 'assertText', 'assertTarget', 'timeoutMs', 'recovery', 'echo', 'when', 'branch']);
     let branch: FlowStep['branch'];
     if (s.branch !== undefined) {
-      const b = object(s.branch); keys(b, ['key', 'when', 'equals', 'resolved']);
-      if (typeof b.key !== 'string' || !/^[A-Za-z][A-Za-z0-9_-]{0,63}$/.test(b.key) || typeof b.equals !== 'boolean'
-        || (b.resolved !== undefined && typeof b.resolved !== 'boolean')) throw new Error('Invalid branch selector');
-      const condition = parseCondition(b.when);
-      if (condition.kind === 'ui-changed' || condition.kind === 'screen-stable') throw new Error('Branch requires a point-in-time condition');
-      branch = { key: b.key, when: condition, equals: b.equals, ...(b.resolved !== undefined ? { resolved: b.resolved } : {}) };
+      const { parents, ...selector } = object(s.branch);
+      if (parents !== undefined && (!Array.isArray(parents) || parents.length < 1 || parents.length > 31)) throw new Error('Branch parents require 1 to 31 selectors');
+      branch = { ...parseBranchSelector(selector), ...(parents !== undefined ? { parents: (parents as unknown[]).map(parseBranchSelector) } : {}) };
+      const chain = [...branch.parents ?? [], branch];
+      if (new Set(chain.map(item => item.key)).size !== chain.length) throw new Error('Branch ancestry contains duplicate keys');
     }
     const when = s.when === undefined ? undefined : parseCondition(s.when);
     if (when?.kind === 'ui-changed' || when?.kind === 'screen-stable') throw new Error('Step condition requires a point-in-time application state');
@@ -204,9 +213,12 @@ export function parseFlow(value: unknown): FlowDefinition {
   });
   const branches = new Map<string, string>();
   for (const step of steps) if (step.branch) {
-    const signature = JSON.stringify({ when: step.branch.when, resolved: step.branch.resolved });
-    if (branches.has(step.branch.key) && branches.get(step.branch.key) !== signature) throw new Error('Branch key has inconsistent conditions or resolved values');
-    branches.set(step.branch.key, signature);
+    const chain = [...step.branch.parents ?? [], step.branch];
+    for (const [index, selector] of chain.entries()) {
+      const signature = JSON.stringify({ when: selector.when, resolved: selector.resolved, parents: chain.slice(0, index).map(parent => ({ key: parent.key, equals: parent.equals })) });
+      if (branches.has(selector.key) && branches.get(selector.key) !== signature) throw new Error('Branch key has inconsistent conditions, resolved values or ancestry');
+      branches.set(selector.key, signature);
+    }
   }
   let appOps: AppOpFixture[] | undefined;
   if (f.appOps !== undefined) {

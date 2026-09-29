@@ -1,15 +1,29 @@
 import { open, readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { isDeepStrictEqual } from 'node:util';
-import type { FlowStep } from './flow-schema.js';
+import type { FlowStep, BranchSelector } from './flow-schema.js';
 import type { ReportStep } from './report.js';
 
 type Branch = NonNullable<FlowStep['branch']>;
 type Decision = { version: 1; key: string; condition: Branch['when']; matched: boolean; source: 'observed' | 'resolved' };
 export class BranchDecisions {
   private readonly decisions = new Map<string, Decision>();
+  private readonly signatures = new Map<string, string>();
   constructor(private readonly root: string) {}
-  async choose(branch: Branch, evaluate: () => Promise<boolean>) {
+  async choose(branch: Branch, evaluate: (condition: BranchSelector['when']) => Promise<boolean>) {
+    const paths: string[] = [];
+    const chain = [...branch.parents ?? [], branch];
+    for (const [index, selector] of chain.entries()) {
+      const signature = JSON.stringify({ when: selector.when, resolved: selector.resolved, parents: chain.slice(0, index).map(parent => ({ key: parent.key, equals: parent.equals })) });
+      if (this.signatures.has(selector.key) && this.signatures.get(selector.key) !== signature) throw new Error('Branch ancestry or definition changed during execution');
+      this.signatures.set(selector.key, signature);
+      const decision = await this.chooseOne(selector, () => evaluate(selector.when));
+      paths.push(decision.path);
+      if (!decision.matched) return { matched: false, paths };
+    }
+    return { matched: true, paths };
+  }
+  private async chooseOne(branch: BranchSelector, evaluate: () => Promise<boolean>) {
     let decision = this.decisions.get(branch.key);
     const path = `branch-${branch.key}.json`;
     if (decision) {
@@ -27,27 +41,33 @@ export class BranchDecisions {
   }
 }
 
-export async function validateCompletedBranch(root: string, step: FlowStep, result: ReportStep): Promise<boolean | undefined> {
+export async function validateCompletedBranch(root: string, step: FlowStep, result: ReportStep): Promise<Map<string, boolean>> {
+  const verified = new Map<string, boolean>();
   if (!step.branch) {
     if (result.branchMatched !== undefined) throw new Error('Unexpected branch result');
-    return;
+    return verified;
   }
-  const branch = step.branch, path = `branch-${branch.key}.json`;
-  if (typeof result.branchMatched !== 'boolean' || !result.evidence?.includes(path)) throw new Error('Missing branch evidence');
-  const decision = JSON.parse(await readFile(join(root, path), 'utf8'));
-  if (typeof decision.matched !== 'boolean' || !isDeepStrictEqual(decision, { version: 1, key: branch.key, condition: branch.when, matched: decision.matched,
-    source: branch.resolved === undefined ? 'observed' : 'resolved' }) || (branch.resolved !== undefined && branch.resolved !== decision.matched)
-    || result.branchMatched !== (decision.matched === branch.equals)) throw new Error('Branch evidence does not match completed step');
+  let selected = true;
+  for (const branch of [...step.branch.parents ?? [], step.branch]) {
+    const path = `branch-${branch.key}.json`;
+    if (typeof result.branchMatched !== 'boolean' || !result.evidence?.includes(path)) throw new Error('Missing branch evidence');
+    const decision = JSON.parse(await readFile(join(root, path), 'utf8'));
+    if (typeof decision.matched !== 'boolean' || !isDeepStrictEqual(decision, { version: 1, key: branch.key, condition: branch.when, matched: decision.matched,
+      source: branch.resolved === undefined ? 'observed' : 'resolved' }) || (branch.resolved !== undefined && branch.resolved !== decision.matched)) throw new Error('Branch evidence does not match completed step');
+    verified.set(branch.key, decision.matched);
+    if (decision.matched !== branch.equals) { selected = false; break; }
+  }
+  if (result.branchMatched !== selected) throw new Error('Branch selection does not match completed step');
   if (!result.branchMatched && (result.status !== 'skipped' || result.conditionMatched !== undefined)) throw new Error('Unselected branch performed a step condition');
-  return decision.matched;
+  return verified;
 }
 
 export async function freezeCompletedBranches(root: string, completed: readonly { item: { step: FlowStep }; result: ReportStep }[], remaining: readonly FlowStep[]) {
   const decisions = new Map<string, boolean>();
   for (const entry of completed) {
-    const matched = await validateCompletedBranch(root, entry.item.step, entry.result);
-    if (matched !== undefined) decisions.set(entry.item.step.branch!.key, matched);
+    for (const [key, matched] of await validateCompletedBranch(root, entry.item.step, entry.result)) decisions.set(key, matched);
   }
-  return remaining.map(step => step.branch && decisions.has(step.branch.key)
-    ? { ...step, branch: { ...step.branch, resolved: decisions.get(step.branch.key)! } } : step);
+  const freeze = (selector: BranchSelector) => decisions.has(selector.key) ? { ...selector, resolved: decisions.get(selector.key)! } : selector;
+  return remaining.map(step => step.branch ? { ...step, branch: { ...freeze(step.branch),
+    ...(step.branch.parents ? { parents: step.branch.parents.map(freeze) } : {}) } } : step);
 }

@@ -156,9 +156,9 @@ export async function executeFlow({ context, driver, flow, signal, resetAppData,
         observation = await driver.observe(deviceId);
         await context.evidence.saveObservation(`before-${index + 1}`, observation);
         if (definition.branch) {
-          const branch = await branches.choose(definition.branch, () => driver.checkCondition(deviceId, definition.branch!.when, observation));
+          const branch = await branches.choose(definition.branch, condition => driver.checkCondition(deviceId, condition, observation));
           branchMatched = branch.matched;
-          conditionEvidence.push(branch.path, ...evidence(observation));
+          conditionEvidence.push(...branch.paths, ...evidence(observation));
           signal?.throwIfAborted();
           if (!branchMatched) {
             await append({ index: index + 1, description: definition.description, status: 'skipped', branchMatched, message: 'Branch was not selected; no operations or checkpoints executed', evidence: conditionEvidence, durationMs: Date.now() - started });

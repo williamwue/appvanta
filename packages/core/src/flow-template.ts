@@ -1,4 +1,4 @@
-import { parseFlow, type FlowDefinition } from './flow-schema.js';
+import { parseFlow, parseCondition, type FlowDefinition, type BranchSelector } from './flow-schema.js';
 
 type Scalar = string | number | boolean | null;
 function record(value: unknown): Record<string, unknown> {
@@ -48,12 +48,24 @@ export function compileFlowTemplate(input: unknown): FlowDefinition {
     return scalar(value);
   };
   const steps: unknown[] = [];
-  const expand = (items: unknown, scope: Map<string, Scalar>, stack: string[]) => {
+  let branchCount = 0;
+  const expand = (items: unknown, scope: Map<string, Scalar>, stack: string[], guards: BranchSelector[] = []) => {
     if (!Array.isArray(items) || !items.length) throw new Error('Template requires non-empty steps');
     if (stack.length > 32) throw new Error('Fragment nesting exceeds 32 levels');
+    if (guards.length > 32) throw new Error('Branch nesting exceeds 32 levels');
     for (const item of items) {
       const step = record(item);
-      if (Object.hasOwn(step, 'use')) {
+      if (Object.hasOwn(step, 'if')) {
+        if (Object.keys(step).some(key => !['if', 'then', 'else'].includes(key))) throw new Error('Unknown branch template field');
+        if (!Array.isArray(step.then) || (step.else !== undefined && !Array.isArray(step.else))) throw new Error('Branch requires then and optional else arrays');
+        const otherwise = (step.else ?? []) as unknown[];
+        if (!step.then.length && !otherwise.length) throw new Error('Branch must contain at least one step');
+        const when = parseCondition(resolve(step.if, scope));
+        if (when.kind === 'ui-changed' || when.kind === 'screen-stable') throw new Error('Branch requires a point-in-time condition');
+        const key = `template_branch_${++branchCount}`;
+        if (step.then.length) expand(step.then, scope, stack, [...guards, { key, when, equals: true }]);
+        if (otherwise.length) expand(otherwise, scope, stack, [...guards, { key, when, equals: false }]);
+      } else if (Object.hasOwn(step, 'use')) {
         if (Object.keys(step).some(key => !['use', 'with'].includes(key))) throw new Error('Unknown fragment invocation field');
         const key = name(step.use), fragment = fragments.get(key);
         if (!fragment) throw new Error(`Unknown fragment: ${key}`);
@@ -62,10 +74,21 @@ export function compileFlowTemplate(input: unknown): FlowDefinition {
         if (Object.keys(args).length !== fragment.parameters.length || fragment.parameters.some(parameter => !Object.hasOwn(args, parameter))) throw new Error(`Fragment arguments do not match parameters: ${key}`);
         const local = new Map(globals);
         for (const parameter of fragment.parameters) local.set(parameter, scalar(resolve(args[parameter], scope)));
-        expand(fragment.steps, local, [...stack, key]);
+        expand(fragment.steps, local, [...stack, key], guards);
       } else {
         if (steps.length >= 1000) throw new Error('Template expands beyond 1000 steps');
-        steps.push(resolve(step, scope));
+        const concrete = record(resolve(step, scope));
+        const native = concrete.branch === undefined ? undefined : record(concrete.branch);
+        if (native) {
+          if (native.parents !== undefined && (!Array.isArray(native.parents) || !native.parents.length || native.parents.length > 31)) throw new Error('Invalid native branch parents');
+          const selectors = [...(Array.isArray(native.parents) ? native.parents : []), native];
+          if (selectors.some(value => typeof record(value).key === 'string' && String(record(value).key).startsWith('template_branch_'))) throw new Error('template_branch_ keys are reserved for the compiler');
+        }
+        if (guards.length) {
+          if (native) concrete.branch = { ...native, parents: [...guards, ...(Array.isArray(native.parents) ? native.parents : [])] };
+          else concrete.branch = { ...guards.at(-1)!, ...(guards.length > 1 ? { parents: guards.slice(0, -1) } : {}) };
+        }
+        steps.push(concrete);
       }
     }
   };

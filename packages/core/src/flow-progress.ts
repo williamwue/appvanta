@@ -154,8 +154,12 @@ export async function prepareAdjudicatedFlowContinuation(root: string, checkpoin
     ...snapshot.pending,
   ];
   const { resetApplications: omittedResets, steps: _steps, ...configuration } = flow;
-  if (snapshot.active.step.branch && !snapshot.completed.some((entry: { item: { step: FlowStep } }) => entry.item.step.branch?.key === snapshot.active.step.branch.key)) {
-    throw new Error('Cannot adjudicate an unfinished initial branch decision; its remaining choice is not verified');
+  const [frozenActive] = await freezeCompletedBranches(root, snapshot.completed, [snapshot.active.step]);
+  if (frozenActive?.branch) {
+    for (const selector of [...frozenActive.branch.parents ?? [], frozenActive.branch]) {
+      if (selector.resolved === undefined) throw new Error('Cannot adjudicate an unfinished initial branch decision; its remaining choice is not verified');
+      if (selector.resolved !== selector.equals) break;
+    }
   }
   const continuation = parseFlow({ ...configuration, name: `Continue after adjudication: ${flow.name}`, steps: [
     { description: 'Verify adjudicated postcondition on live device', action: { kind: 'wait', condition, timeoutMs } },

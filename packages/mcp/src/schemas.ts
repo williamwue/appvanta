@@ -23,8 +23,10 @@ const conditions = [
   variant('screen-stable', { stableMs: integer(100, 3600000), channelThreshold: integer(0, 255), maxMismatchRatio: { type: 'number', minimum: 0, maximum: 1 }, ignoreRegions: { type: 'array', maxItems: 100, items: object({ x: integer(0, 100000), y: integer(0, 100000), width: integer(1, 100000), height: integer(1, 100000) }) } }, ['stableMs']),
 ];
 const present = (names: string[]) => ({ anyOf: names.map(name => ({ required: [name] })) });
+const branchProperties = { key: { type: 'string', pattern: '^[A-Za-z][A-Za-z0-9_-]{0,63}$' }, when: { oneOf: conditions.filter(condition => (condition.properties as Record<string, { const?: string }>).kind?.const !== 'screen-stable') }, equals: { type: 'boolean' }, resolved: { type: 'boolean' } };
+const branchRequired = ['key', 'when', 'equals'];
 const stepProperties = {
-  branch: object({ key: { type: 'string', pattern: '^[A-Za-z][A-Za-z0-9_-]{0,63}$' }, when: { oneOf: conditions.filter(condition => (condition.properties as Record<string, { const?: string }>).kind?.const !== 'screen-stable') }, equals: { type: 'boolean' }, resolved: { type: 'boolean' } }, ['key', 'when', 'equals']),
+  branch: object({ ...branchProperties, parents: { type: 'array', minItems: 1, maxItems: 31, items: object(branchProperties, branchRequired) } }, branchRequired),
   when: { oneOf: conditions.filter(condition => (condition.properties as Record<string, { const?: string }>).kind?.const !== 'screen-stable') },
   description: string, action: ref('action'), launchPackage: packageName,
   openUrl: { type: 'string', format: 'http-url' },

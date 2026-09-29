@@ -165,7 +165,9 @@ jobs:
         run: node scripts/verify-process-condition.mjs emulator-5554
       - name: Verify persisted Flow branch selection
         timeout-minutes: 3
-        run: node scripts/verify-flow-branch.mjs emulator-5554
+        run: |
+          node scripts/verify-flow-branch.mjs emulator-5554
+          node scripts/verify-flow-branch.mjs emulator-5554 nested
       - name: Verify application accelerometer callbacks
         timeout-minutes: 4
         run: |

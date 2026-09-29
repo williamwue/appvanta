@@ -1,4 +1,4 @@
-# Flow 变量与参数化子流程
+# Flow 变量、参数化子流程与分支
 
 `compileFlowTemplate(template)` 把 JSON 模板编译为现有 `FlowDefinition`。CLI 提供相同编译入口：
 
@@ -17,6 +17,19 @@ appvanta run-flow emulator-5554 compiled.json
 
 当前是显式离线编译，输入文件为 JSON。动态提取值、外部文件导入、循环及 MCP 直接编译工具尚未实现。`node scripts/verify-flow-template.mjs [device]` 验证真实 CLI 编译、拒绝覆盖及可选设备 CLI/MCP 执行与持久 Flow 一致性。
 
+## 模板 then/else
+
+模板步骤支持 `{"if": condition, "then": [...], "else": [...]}`。`then` 必须为数组，`else` 可省略；允许其中一侧为空，但两侧不能同时为空。条件为文本/目标可见或不可见、应用进程运行等当前状态条件。编译时不查询设备，而是将两侧步骤展开为下面的持久分支选择器；运行时每个选择只查询一次。
+
+分支中可以调用参数化片段或继续嵌套分支，片段中也可以包含分支。内层仅在所有外层均选中时查询；外层未选中时，不查询内层或步骤自身的 `when`。每次片段展开获得独立的编译器分支 key，避免两次片段调用意外复用决定。`template_branch_` 前缀保留给编译器，模板内显式原生选择器不能占用。最多允许 32 层分支，两个分支展开后的所有步骤合计计入 1000 步上限。
+
+完整示例见 `docs/templates/branch.json`，可执行：
+
+```powershell
+appvanta compile-flow docs/templates/branch.json compiled-branch.json
+appvanta run-flow emulator-5554 compiled-branch.json
+```
+
 ## 运行时条件步骤
 
 普通 Flow 步骤可提供 `when`，支持文本/目标可见或不可见、应用进程运行等当前状态条件；不接受需要时间窗口的 `screen-stable` 或 `ui-changed`。条件在该步骤任何启动应用、打开链接、动作和检查点之前判断一次。
@@ -27,11 +40,13 @@ appvanta run-flow emulator-5554 compiled.json
 
 每次判断保存 `condition-N.json`、判断前的观察证据和 `conditionMatched` 报告字段；进度检查验证决定与原步骤、报告和证据摘要一致。已完成的跳过步骤不会进入边界续跑计划。判断/执行中崩溃仍是不确定步骤，需要现有显式裁决流程。录制回放只包含当次实际动作，将跳过步骤转为说明性 echo，不重新判断条件或补执行原动作。
 
-`when` 仍是逐步骤条件执行。需要复用同一次选择时，使用下述 `branch`；模板级 `then/else` 语法和嵌套分支编译尚待接入，不能用两个独立 `when` 代替一次分支选择。
+`when` 仍是逐步骤条件执行。需要复用同一次选择时，使用模板 `if/then/else` 或下述原生 `branch`，不能用两个独立 `when` 代替一次分支选择。
 
 ## 持久分支决定
 
 步骤可指定 `branch: { key, when, equals }`。相同 key 的条件只在首次到达时查询一次，并在任何动作前以独占创建和 fsync 写入 `branch-<key>.json`；后续步骤复用该决定。`equals: true` 表示选择真分支，`equals: false` 表示选择假分支。同 key 必须声明相同条件，key 只允许字母开头及字母、数字、下划线、连字符，最多 64 字符。
+
+嵌套步骤的 `branch.parents` 按外到内列出 1–31 个祖先选择器。解析器拒绝重复 key 和同 key 不一致的祖先关系；执行器从外到内短路判断。决定文件仅为实际到达的条件生成，证据校验不会要求未访问分支的虚构文件。
 
 ```json
 {"name":"One decision","steps":[
@@ -42,9 +57,11 @@ appvanta run-flow emulator-5554 compiled.json
 
 未选中步骤记录 `skipped` 和 `branchMatched: false`，不执行其 `when`、动作、检查点或业务恢复。选中步骤仍可使用自身的 `when`。分支查询错误不当作假值。报告引用共享决定和观察证据，进度校验和录制回放都会核验选择及证据；回放只保留已执行动作。
 
-安全边界续跑从已完成步骤的已校验证据读取决定，将剩余同 key 步骤写为 `branch.resolved`，不会因设备当前状态变化而重新选分支。回执标记 `source: resolved`，区别于现场查询的 `observed`。显式提交含 `resolved` 的 Flow 也会固定选择，不会查询设备；该字段不声称现场条件为真。首个分支步骤尚未完成且无已验证的同 key 决定时，裁决续跑暂时拒绝，以免跳过不确定动作后重新选路；嵌套分支和此边界的进一步处理仍待完成。
+安全边界续跑从已完成步骤的已校验证据读取决定，将剩余同 key 选择器（含祖先）写为 `resolved`，不会因设备当前状态变化而重新选分支。回执标记 `source: resolved`，区别于现场查询的 `observed`。显式提交含 `resolved` 的 Flow 也会固定选择，不会查询设备；该字段不声称现场条件为真。未访问的内层不补造决定，仍受已固定外层约束。首个分支步骤尚未完成且存在未验证的、会被访问的选择时，裁决续跑暂时拒绝，以免跳过不确定动作后重新选路；此边界的进一步处理仍待完成。
 
 验证：core 专项使用变化的假设备状态证明只查询一次，并验证篡改拒绝、错误停止和真实宿主强杀后的决定固定。API 37 的 `flow-branch-1790711504339/verification.json` 验证 CLI/MCP 均产生 skipped/skipped/passed/passed 四步结果，未选中动作没有执行。四包构建及 core 111、Android 87、脚本 40 项共 238 项测试通过。设备验收已加入托管 CI，结果需绑定对应后续提交。
+
+嵌套验收：四种真假组合、非法分支/祖先拒绝、外层真假两种真实宿主强杀续跑均通过。API 37 的 `flow-branch-1790712052784/verification.json` 验证真实 CLI 编译嵌套模板及 CLI/MCP 执行，输出 skipped/passed/passed/skipped，两个决定分别为真和假。完整构建及 core 117、Android 87、脚本 40 项共 244 项测试通过。基础分支公开 `f113b79` 的托管运行 `36622517753` 已全绿，但不包含本轮嵌套实现。
 
 条件执行的本地 API 37 CLI/MCP 联合证据为 `.appvanta/runs/flow-template-1790707446034/verification.json`，两条入口均产生 passed/skipped/passed 三步结果且清理成功。四包构建及 221 项完整测试通过，专项还验证了跳过后的真实宿主强杀、边界续跑计划与条件证据篡改拒绝。此前不含条件的模板提交 `36f8749` 已在托管运行 `36613274689` 四项通过；条件实现需等待自己的托管验收。
 

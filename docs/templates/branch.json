@@ -1,0 +1,19 @@
+{
+  "name": "Nested application branch",
+  "variables": { "runningApp": "com.android.systemui", "missingApp": "dev.appvanta.missing" },
+  "fragments": {
+    "say": { "parameters": ["message"], "steps": [{ "description": "Selected branch output", "echo": { "$var": "message" } }] }
+  },
+  "steps": [{
+    "if": { "kind": "app-running", "packageName": { "$var": "runningApp" } },
+    "then": [{
+      "if": { "kind": "app-running", "packageName": { "$var": "missingApp" } },
+      "then": [{ "description": "Unexpected app exists", "echo": "Missing app is running" }],
+      "else": [
+        { "use": "say", "with": { "message": "System UI is running; missing app is absent" } },
+        { "use": "say", "with": { "message": "Both decisions are reused" } }
+      ]
+    }],
+    "else": [{ "description": "System UI is absent", "echo": "System UI was not running" }]
+  }]
+}
