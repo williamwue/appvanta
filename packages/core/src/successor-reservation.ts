@@ -152,7 +152,7 @@ export async function reconcileAdjudicatedSuccessor(store: TaskStore, predecesso
     !isDeepStrictEqual(preparation.flow, reservation.flow) || reservation.flowSha256 !== digest(JSON.stringify(reservation.flow)))
     throw new Error('Successor reservation preparation binding changed');
   const task = await store.createReserved(reservation.successorTaskId, reservation.deviceId, reservation.flow,
-    { id: reservation.id, digestSha256: digest(JSON.stringify(reservation)) });
+    { id: reservation.id, digestSha256: digest(JSON.stringify(reservation)) }, { allowRunningRecovery: true });
   return { reservation, task };
 }
 

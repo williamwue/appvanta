@@ -71,3 +71,19 @@ test('reserved claim recovers only a stale local claim lock', async () => {
     assert.equal(await readFile(join(f.root, taskId, 'reserved-claim.lock')).catch(() => undefined), undefined);
   } finally { await rm(f.root, { recursive: true, force: true }); }
 });
+
+test('reserved running recovery requires no execution evidence and a dead owner', async () => {
+  const f = await fixture();
+  try {
+    const running = { version: 1, id: taskId, deviceId: 'emulator', flow,
+      owner: { pid: 2147483647, host: hostname(), session: 'eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee' },
+      startedAt: new Date().toISOString(), revision: 2, status: 'running' };
+    await writeFile(join(f.root, taskId, 'task.json'), JSON.stringify(running));
+    const recovered = await f.store.recoverReservedRunning(taskId, f.receipt, 2);
+    assert.equal(recovered.status, 'running');
+    assert.equal(recovered.owner.pid, process.pid);
+    assert.equal(recovered.revision, 3);
+    await writeFile(join(f.root, taskId, 'task.json'), JSON.stringify({ ...running, runDirectory: join(f.root, 'run') }));
+    await assert.rejects(f.store.recoverReservedRunning(taskId, f.receipt, 2), /queued|execution evidence/);
+  } finally { await rm(f.root, { recursive: true, force: true }); }
+});

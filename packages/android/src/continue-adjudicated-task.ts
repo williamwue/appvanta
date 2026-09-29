@@ -54,8 +54,9 @@ export async function continueAdjudicatedAndroidTask(store: TaskStore, predecess
   // Reconciliation is idempotent and does not inspect the device. It creates a
   // queued reservation task when a prior process died before publication.
   const reconciled = await reconcileAdjudicatedSuccessor(store, predecessorTaskId, receipt);
-  if (reconciled.task.id !== reservation.successorTaskId || reconciled.task.status !== 'queued')
-    throw new Error('Adjudicated successor is not queued for guarded execution');
+  if (reconciled.task.id !== reservation.successorTaskId ||
+    reconciled.task.status !== 'queued' && reconciled.task.status !== 'running')
+    throw new Error('Adjudicated successor is not queued or recoverable after a guarded claim');
   const markerDigest = createHash('sha256').update(JSON.stringify(reservation)).digest('hex');
   let task = reconciled.task;
 
@@ -76,7 +77,9 @@ export async function continueAdjudicatedAndroidTask(store: TaskStore, predecess
     if (!state || state.owner !== 'alive' || state.lease.recoveredFrom?.token !== claim.abandonedLease.token ||
       !state.lease.runDirectory || await realpath(state.lease.runDirectory) !== await realpath(sourceRun))
       throw new Error('Transferred lease does not retain adjudicated source lineage');
-    task = await store.claimReserved(task.id, { id: reservation.id, digestSha256: markerDigest }, task.revision);
+    task = task.status === 'running'
+      ? await store.recoverReservedRunning(task.id, { id: reservation.id, digestSha256: markerDigest }, task.revision)
+      : await store.claimReserved(task.id, { id: reservation.id, digestSha256: markerDigest }, task.revision);
     try {
       const result = await runFlow(task.deviceId, claim.flow, options.signal, async root => {
         const lineage = {

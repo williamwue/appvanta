@@ -81,3 +81,26 @@ test('adjudicated continuation fake executes only after exact dead lease transfe
     assert.equal(marker.resumeAuthorized, false);
   } finally { await rm(f.root, { recursive: true, force: true }); }
 });
+
+test('adjudicated continuation recovers a reserved claim that died after entering running', async () => {
+  const f = await executionFixture();
+  try {
+    const taskPath = join(f.store.directory, f.reservation.reservation.successorTaskId, 'task.json');
+    const reservedTask = JSON.parse(await readFile(taskPath, 'utf8'));
+    await save(taskPath, { ...reservedTask, status: 'running', owner: { ...reservedTask.owner, pid: 2147483647 } });
+    const result = await continueAdjudicatedAndroidTask(f.store, f.successor.id, f.receipt, {
+      lockDirectory: f.root + '/locks',
+      continueFlow: async (_device, _token, operation, beforeRecovery) => {
+        await beforeRecovery?.();
+        await save(f.lockPath, { ...f.oldLease, token: 'cccccccc-cccc-4ccc-8ccc-cccccccccccc', pid: process.pid, recoveredFrom: { token: f.oldLease.token, runDirectory: f.successorRun } });
+        return operation(f.successorRun);
+      },
+      runFlow: async (_device, _flow, _signal, onRunCreated) => {
+        const run = join(f.root, 'recovered-run'); await mkdir(run); await onRunCreated?.(run);
+        return { status: 'passed', runDirectory: run, report: join(run, 'report.md'), steps: [] };
+      },
+    });
+    assert.equal(result.status, 'passed');
+    assert.equal((await f.store.get(f.reservation.reservation.successorTaskId)).status, 'passed');
+  } finally { await rm(f.root, { recursive: true, force: true }); }
+});

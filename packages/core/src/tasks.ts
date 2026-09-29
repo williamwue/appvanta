@@ -68,8 +68,10 @@ const removeTemporary = async (path: string) => {
   catch (error) { if (!isCode(error, 'ENOENT')) { /* preserve the publication error */ } }
 };
 function sameReservedTask(task: TaskRecord, id: string, deviceId: string, flow: FlowDefinition,
-  options: { completionWebhook?: string }) {
-  return task.version === 1 && task.id === id && task.deviceId === deviceId && task.status === 'queued' &&
+  options: { completionWebhook?: string; allowRunningRecovery?: boolean }) {
+  const recoverableRunning = options.allowRunningRecovery && task.status === 'running' && task.runDirectory === undefined &&
+    task.finishedAt === undefined && task.result === undefined && task.error === undefined;
+  return task.version === 1 && task.id === id && task.deviceId === deviceId && (task.status === 'queued' || recoverableRunning) &&
     isDeepStrictEqual(task.flow, flow) && (options.completionWebhook === undefined
       ? task.completionWebhook === undefined : task.completionWebhook === options.completionWebhook) &&
     !!task.owner && Number.isSafeInteger(task.owner.pid) && task.owner.pid > 0 &&
@@ -104,7 +106,7 @@ export class TaskStore {
   /** Publishes a task at a predetermined ID guarded by an immutable reservation marker. */
   async createReserved(id: string, deviceId: string, flow: FlowDefinition, reservation: {
     readonly id: string; readonly digestSha256: string;
-  }, options: { completionWebhook?: string } = {}): Promise<TaskRecord> {
+  }, options: { completionWebhook?: string; allowRunningRecovery?: boolean } = {}): Promise<TaskRecord> {
     if (!/^task-[a-f0-9-]{36}$/.test(id) || !uuidPattern.test(reservation.id) ||
       !/^[a-f0-9]{64}$/.test(reservation.digestSha256) || typeof deviceId !== 'string' || !deviceId.trim())
       throw new Error('Invalid reserved task identity');
@@ -207,8 +209,15 @@ export class TaskStore {
     return this.claimReservedInternal(id, reservation, expectedRevision, 'running');
   }
 
+  /** Recover a reserved claim that reached running before its owner died.
+   * This is deliberately narrower than claimReserved: no execution evidence
+   * may have been published, and the previous owner must be dead. */
+  async recoverReservedRunning(id: string, reservation: ReservedTaskReceipt, expectedRevision?: number): Promise<TaskRecord> {
+    return this.claimReservedInternal(id, reservation, expectedRevision, 'running', true);
+  }
+
   private async claimReservedInternal(id: string, reservation: ReservedTaskReceipt,
-    expectedRevision: number | undefined, status: 'queued' | 'running'): Promise<TaskRecord> {
+    expectedRevision: number | undefined, status: 'queued' | 'running', recoverRunning = false): Promise<TaskRecord> {
     if (!/^task-[a-f0-9-]{36}$/.test(id) || !reservation || !uuidPattern.test(reservation.id) ||
       !/^[a-f0-9]{64}$/.test(reservation.digestSha256)) throw new Error('Invalid reserved task claim');
     if (expectedRevision !== undefined && (!Number.isSafeInteger(expectedRevision) || expectedRevision < 0))
@@ -251,7 +260,9 @@ export class TaskStore {
         typeof marker.flowSha256 !== 'string' || !/^[a-f0-9]{64}$/.test(marker.flowSha256))
         throw new Error('Reserved task marker does not match claim');
       const existing = JSON.parse(await readFile(join(root, 'task.json'), 'utf8')) as TaskRecord;
-      if (existing.version !== 1 || existing.id !== id || existing.status !== 'queued' || !existing.owner ||
+      const recoverableRunning = recoverRunning && existing.status === 'running' && existing.runDirectory === undefined &&
+        existing.finishedAt === undefined && existing.result === undefined && existing.error === undefined;
+      if (existing.version !== 1 || existing.id !== id || existing.status !== 'queued' && !recoverableRunning || !existing.owner ||
         !Number.isSafeInteger(existing.owner.pid) || existing.owner.pid < 1 || typeof existing.owner.session !== 'string' ||
         !uuidPattern.test(existing.owner.session) || typeof existing.owner.host !== 'string' || existing.owner.host !== hostname() ||
         marker.deviceId !== existing.deviceId || marker.flowSha256 !== createFlowDigest(existing.flow))
@@ -259,6 +270,8 @@ export class TaskStore {
       const revision = taskRevision(existing);
       if (expectedRevision !== undefined && revision !== expectedRevision)
         throw new Error('Reserved task revision changed');
+      if (recoverableRunning && (existing.runDirectory !== undefined || existing.finishedAt !== undefined ||
+        existing.result !== undefined || existing.error !== undefined)) throw new Error('Reserved running task has execution evidence');
       const alreadyOwned = existing.owner.pid === process.pid && existing.owner.session === this.session;
       if (!alreadyOwned) {
         try { process.kill(existing.owner.pid, 0); throw new Error('Reserved task owner is still alive'); }
