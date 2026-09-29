@@ -2,7 +2,7 @@
 
 更新：2026-09-28。本文件汇总当前有界验收；阶段清单中的逐次记录作为带日期的历史证据，旧段落中的“待完成”应结合本文件及后续验收读取。最终目标仍是覆盖固定版本 Argent / ARTEMIS 的全部公开可验证功能，不因本轮收尾缩小范围。以下 39 项清单保持完整，1 项已完成、38 项仍待办。
 
-Current verification snapshot (2026-09-29): integration head 6697796; local full build/tests pass (core 90, Android 52, scripts 33). Hosted run 36586711526 passed Android, Linux, Windows, and macOS. P0-03 now includes guarded recovery for a reserved claim that reached running before its owner died, but only when no run directory/result/error evidence exists; real-device execution and OEM acceptance remain open. Real-device/OEM acceptance remains unavailable; emulator evidence only.
+Verification boundary correction (2026-09-29): integration 6697796 passed local tests (core 90, Android 52, scripts 33). Its running-task test retained the original lease instead of simulating the transferred lease left by a real worker crash. A regression now confirms that an old adjudication receipt is rejected against a dead transferred lease before device execution. Actual crash-after-running continuation therefore remains incomplete; missing task run/result/error fields alone do not prove safe recovery. Real-device/OEM acceptance remains unavailable; emulator evidence only. Package reinstall/uninstall and complete MCP response framing are implemented at ffb9d9c; same-version reinstall does not prove cross-version upgrade or schema migration.
 
 ## 本轮已完成的范围
 

@@ -270,10 +270,8 @@ export class TaskStore {
       const revision = taskRevision(existing);
       if (expectedRevision !== undefined && revision !== expectedRevision)
         throw new Error('Reserved task revision changed');
-      if (recoverableRunning && (existing.runDirectory !== undefined || existing.finishedAt !== undefined ||
-        existing.result !== undefined || existing.error !== undefined)) throw new Error('Reserved running task has execution evidence');
       const alreadyOwned = existing.owner.pid === process.pid && existing.owner.session === this.session;
-      if (!alreadyOwned) {
+      if (recoverRunning || !alreadyOwned) {
         try { process.kill(existing.owner.pid, 0); throw new Error('Reserved task owner is still alive'); }
         catch (error) {
           if (error instanceof Error && error.message === 'Reserved task owner is still alive') throw error;

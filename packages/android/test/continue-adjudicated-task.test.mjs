@@ -82,7 +82,7 @@ test('adjudicated continuation fake executes only after exact dead lease transfe
   } finally { await rm(f.root, { recursive: true, force: true }); }
 });
 
-test('adjudicated continuation recovers a reserved claim that died after entering running', async () => {
+test('adjudicated continuation accepts a dead running task while the original lease is unchanged', async () => {
   const f = await executionFixture();
   try {
     const taskPath = join(f.store.directory, f.reservation.reservation.successorTaskId, 'task.json');
@@ -102,5 +102,23 @@ test('adjudicated continuation recovers a reserved claim that died after enterin
     });
     assert.equal(result.status, 'passed');
     assert.equal((await f.store.get(f.reservation.reservation.successorTaskId)).status, 'passed');
+  } finally { await rm(f.root, { recursive: true, force: true }); }
+});
+
+test('a dead transferred lease still rejects the old adjudication receipt before device execution', async () => {
+  const f = await executionFixture();
+  try {
+    const taskPath = join(f.store.directory, f.reservation.reservation.successorTaskId, 'task.json');
+    const task = JSON.parse(await readFile(taskPath, 'utf8'));
+    await save(taskPath, { ...task, status: 'running', owner: { ...task.owner, pid: 2147483647 } });
+    await save(f.lockPath, { ...f.oldLease, token: randomUUID(),
+      recoveredFrom: { token: f.oldLease.token, runDirectory: f.successorRun } });
+    let deviceTouched = false;
+    await assert.rejects(continueAdjudicatedAndroidTask(f.store, f.successor.id, f.receipt, {
+      lockDirectory: join(f.root, 'locks'),
+      continueFlow: async () => { deviceTouched = true; throw new Error('Unexpected device execution'); },
+    }), /exact abandoned successor device lease/);
+    assert.equal(deviceTouched, false);
+    assert.equal((await f.store.get(task.id)).status, 'interrupted');
   } finally { await rm(f.root, { recursive: true, force: true }); }
 });

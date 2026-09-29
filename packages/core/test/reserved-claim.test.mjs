@@ -83,6 +83,9 @@ test('reserved running recovery requires no execution evidence and a dead owner'
     assert.equal(recovered.status, 'running');
     assert.equal(recovered.owner.pid, process.pid);
     assert.equal(recovered.revision, 3);
+    const snapshot = await readFile(join(f.root, taskId, 'task.json'), 'utf8');
+    await assert.rejects(f.store.recoverReservedRunning(taskId, f.receipt, 3), /alive/);
+    assert.equal(await readFile(join(f.root, taskId, 'task.json'), 'utf8'), snapshot);
     await writeFile(join(f.root, taskId, 'task.json'), JSON.stringify({ ...running, runDirectory: join(f.root, 'run') }));
     await assert.rejects(f.store.recoverReservedRunning(taskId, f.receipt, 2), /queued|execution evidence/);
   } finally { await rm(f.root, { recursive: true, force: true }); }
