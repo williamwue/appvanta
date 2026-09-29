@@ -34,7 +34,7 @@
 | Perfetto 捕获、分析和步骤关联 | Argent | partial | 调度 CPU 和步骤标记已实测；多次采样和更多指标待完成 | 阶段 4/5 |
 | 截图视觉差异与基线 | Argent | partial | PNG 像素容差、差异比例门禁、边界框和 diff 图已实现；矩形遮罩已有 API 37 验收；真机基线及感知差异待完成 | 阶段 5 |
 | 手动交互录制为 Flow | Argent | partial | 自研 Accessibility helper、包白名单、服务重建恢复、CLI/MCP 会话、原始事件和 Flow 编译已实现；模拟器已验证跨 MCP 停止、语义点击及回放，真机与 Canvas/多点/硬件键边界待验收 | 阶段 5 |
-| Flow 脚本、echo 与 YAML | Argent | partial | JSON/YAML Flow 与 echo 共用严格 Schema；新增 JSON 模板的类型化变量、参数化子流程及显式编译，API 37 CLI 执行通过；运行时条件分支和动态变量仍待完成，见 flow-templates.md | 阶段 5 |
+| Flow 脚本、echo 与 YAML | Argent | partial | JSON/YAML Flow 与 echo 共用严格 Schema；JSON 模板支持类型化变量与参数化子流程，when 条件步骤已通过 API 37 CLI/MCP 验证；复合 then/else 分支和动态变量仍待完成，见 flow-templates.md | 阶段 5 |
 | 运行证据、trace 检查和回放 | 两者 | partial | 截图/UI/日志/视频/报告和离线导出已有；可视化时间线/覆盖层缺失 | 阶段 5 |
 | CLI | 两者 | partial | Android 命令已实现；安装、帮助和兼容性仍需发布验收 | 阶段 5 |
 | MCP | 两者 | partial | stdio 协议与工具已测试；Codex/Claude Code/Cursor 产品内验收待完成 | 阶段 5 |

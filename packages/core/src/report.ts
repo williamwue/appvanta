@@ -10,6 +10,7 @@ export interface ReportStep {
   readonly evidence?: readonly string[];
   readonly message?: string;
   readonly output?: string;
+  readonly conditionMatched?: boolean;
 }
 
 export interface RunReportInput {

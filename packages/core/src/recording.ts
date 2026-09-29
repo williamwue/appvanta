@@ -4,6 +4,7 @@ import { join } from 'node:path';
 import type { FlowDriver } from './flow.js';
 import { parseFlow } from './flow-schema.js';
 import type { FlowStep } from './flow-schema.js';
+import { validateCompletedCondition } from './step-condition.js';
 
 export async function recordingDriver(driver: FlowDriver, root: string, step: () => number): Promise<FlowDriver> {
   const path = join(root, 'actions.jsonl');
@@ -43,7 +44,8 @@ export async function recordedFlow(root: string) {
   }
   const source = parseFlow(JSON.parse(await readFile(join(root, 'flow.json'), 'utf8')));
   const records = (await readFile(join(root, 'steps.jsonl'), 'utf8')).trim().split(/\r?\n/).map(line => JSON.parse(line));
-  if (records.length !== source.steps.length || records.some((r, i) => r.index !== i + 1 || r.status !== 'passed' || r.description !== source.steps[i]?.description)) throw new Error('Step evidence does not match completed Flow');
+  if (records.length !== source.steps.length || records.some((r, i) => r.index !== i + 1 || !['passed', 'skipped'].includes(r.status) || r.description !== source.steps[i]?.description)) throw new Error('Step evidence does not match completed Flow');
+  for (const [index, record] of records.entries()) await validateCompletedCondition(root, source.steps[index]!, record);
   const lines = (await readFile(join(root, 'actions.jsonl'), 'utf8')).split(/\r?\n/).filter(Boolean).map(line => JSON.parse(line));
   const operations = new Map<number, FlowStep[]>();
   let lastStep = 1;
@@ -60,6 +62,11 @@ export async function recordedFlow(root: string) {
   const steps: FlowStep[] = [];
   for (const [index, definition] of source.steps.entries()) {
     const actual = operations.get(index + 1) ?? [];
+    if (records[index].status === 'skipped') {
+      if (actual.length) throw new Error('Skipped conditional step has recorded operations');
+      steps.push({ description: definition.description, echo: 'Originally skipped because its condition was false; no operation replayed.' });
+      continue;
+    }
     if (!actual.length && (definition.action || definition.launchPackage || definition.openUrl)) throw new Error('Missing action recording for executed step');
     steps.push(...actual);
     if (definition.echo) steps.push({ description: definition.description, echo: definition.echo });

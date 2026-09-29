@@ -17,5 +17,17 @@
       }]
     }
   },
-  "steps": [{ "use": "launchAndWait", "with": { "package": { "$var": "app" } } }]
+  "steps": [
+    { "use": "launchAndWait", "with": { "package": { "$var": "app" } } },
+    {
+      "description": "Skip absent application",
+      "when": { "kind": "app-running", "packageName": "dev.appvanta.condition.absent" },
+      "launchPackage": "dev.appvanta.condition.absent"
+    },
+    {
+      "description": "Confirm conditional output",
+      "when": { "kind": "app-running", "packageName": { "$var": "app" } },
+      "echo": "Markor process is running"
+    }
+  ]
 }

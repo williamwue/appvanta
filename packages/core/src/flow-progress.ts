@@ -3,6 +3,7 @@ import { readFile, realpath } from 'node:fs/promises';
 import { isAbsolute, join, relative, resolve } from 'node:path';
 import { isDeepStrictEqual } from 'node:util';
 import { parseFlow, parseCondition, type FlowStep } from './flow-schema.js';
+import { validateCompletedCondition } from './step-condition.js';
 import type { TaskInstructionRecord } from './task-instructions.js';
 
 export type ProgressEvidenceHashes = Record<string, { sha256: string; bytes: number }>;
@@ -58,7 +59,8 @@ async function readValidatedProgress(root: string, instructions?: readonly TaskI
   for (const [index, entry] of snapshot.completed.entries()) {
     inspectItem(entry?.item);
     if (entry.item.instructionId) instructionItems.get(entry.item.instructionId)!.completed = true;
-    if (entry.result?.status !== 'passed' || entry.result.index !== index + 1 || !isDeepStrictEqual(entry.result, steps[index])) throw new Error('Completed progress does not match passed step evidence');
+    if (!['passed', 'skipped'].includes(entry.result?.status) || entry.result.index !== index + 1 || !isDeepStrictEqual(entry.result, steps[index])) throw new Error('Completed progress does not match passed/skipped step evidence');
+    await validateCompletedCondition(root, entry.item.step, entry.result);
     if (!Array.isArray(entry.result.evidence)) throw new Error('Missing completed step evidence');
     const actual = await fingerprintProgressEvidence(root, entry.result.evidence, entry.evidenceSha256);
     if (!entry.evidenceSha256 || !isDeepStrictEqual(JSON.parse(JSON.stringify(actual)), entry.evidenceSha256)) throw new Error('Progress evidence hash mismatch');

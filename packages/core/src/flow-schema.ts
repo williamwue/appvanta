@@ -12,6 +12,7 @@ export interface NetworkConfig { readonly python: string; readonly mitmdump: str
 export interface RecoveryRule { readonly description: string; readonly when: Condition; readonly action?: Action; readonly launchPackage?: string }
 export interface RecoveryPolicy { readonly maxAttempts: number; readonly rules: readonly RecoveryRule[] }
 export interface FlowStep {
+  readonly when?: Condition;
   readonly recovery?: RecoveryPolicy;
   readonly description: string;
   readonly action?: Action;
@@ -172,7 +173,9 @@ export function parseFlow(value: unknown): FlowDefinition {
   if (f.version !== undefined && f.version !== 1) throw new Error('Unsupported Flow version');
   if (!Array.isArray(f.steps) || !f.steps.length) throw new Error('Flow requires non-empty steps');
   const steps = f.steps.map((value): FlowStep => {
-    const s = object(value); keys(s, ['description', 'action', 'launchPackage', 'openUrl', 'assertText', 'assertTarget', 'timeoutMs', 'recovery', 'echo']);
+    const s = object(value); keys(s, ['description', 'action', 'launchPackage', 'openUrl', 'assertText', 'assertTarget', 'timeoutMs', 'recovery', 'echo', 'when']);
+    const when = s.when === undefined ? undefined : parseCondition(s.when);
+    if (when?.kind === 'ui-changed' || when?.kind === 'screen-stable') throw new Error('Step condition requires a point-in-time application state');
     if (!['action', 'launchPackage', 'openUrl', 'assertText', 'assertTarget', 'echo'].some(k => s[k] !== undefined)) throw new Error('Empty Flow step');
     const openUrl = s.openUrl !== undefined ? text(s.openUrl) : undefined;
     if (openUrl && !['http:', 'https:'].includes(new URL(openUrl).protocol)) throw new Error('openUrl requires HTTP(S)');
@@ -182,7 +185,7 @@ export function parseFlow(value: unknown): FlowDefinition {
     if (recovery && s.assertText === undefined && s.assertTarget === undefined) throw new Error('Recovery requires a step checkpoint');
     const echo = s.echo === undefined ? undefined : text(s.echo);
     if (echo && Buffer.byteLength(echo, 'utf8') > 10000) throw new Error('Echo must be at most 10000 UTF-8 bytes');
-    return { ...(recovery ? { recovery } : {}), description: text(s.description), ...(s.action !== undefined ? { action: parseAction(s.action) } : {}), ...(s.launchPackage !== undefined ? { launchPackage: packageName(s.launchPackage) } : {}), ...(openUrl ? { openUrl } : {}), ...(echo ? { echo } : {}), ...(s.assertText !== undefined ? { assertText: text(s.assertText) } : {}), ...(assertTarget ? { assertTarget } : {}), ...(s.timeoutMs !== undefined ? { timeoutMs: number(s.timeoutMs, 1, 3600000) } : {}) };
+    return { ...(when ? { when } : {}), ...(recovery ? { recovery } : {}), description: text(s.description), ...(s.action !== undefined ? { action: parseAction(s.action) } : {}), ...(s.launchPackage !== undefined ? { launchPackage: packageName(s.launchPackage) } : {}), ...(openUrl ? { openUrl } : {}), ...(echo ? { echo } : {}), ...(s.assertText !== undefined ? { assertText: text(s.assertText) } : {}), ...(assertTarget ? { assertTarget } : {}), ...(s.timeoutMs !== undefined ? { timeoutMs: number(s.timeoutMs, 1, 3600000) } : {}) };
   });
   let appOps: AppOpFixture[] | undefined;
   if (f.appOps !== undefined) {

@@ -127,6 +127,9 @@ export async function executeFlow({ context, driver, flow, signal, resetAppData,
       const started = Date.now();
       let observation: Observation | undefined;
       const recoveryEvidence: string[] = [];
+      const conditionEvidence: string[] = [];
+      let conditionMatched: boolean | undefined;
+      let conditionAccepted = !definition.when;
       let marked = false;
       const verify = async () => {
         const deadline = Date.now() + (definition.timeoutMs ?? 5000);
@@ -148,6 +151,21 @@ export async function executeFlow({ context, driver, flow, signal, resetAppData,
         marked = true;
         observation = await driver.observe(deviceId);
         await context.evidence.saveObservation(`before-${index + 1}`, observation);
+        if (definition.when) {
+          conditionMatched = await driver.checkCondition(deviceId, definition.when, observation);
+          if (typeof conditionMatched !== 'boolean') throw new Error('Condition driver must return a boolean');
+          signal?.throwIfAborted();
+          const path = `condition-${index + 1}.json`;
+          await save(path, { version: 1, index: index + 1, condition: definition.when, matched: conditionMatched });
+          conditionEvidence.push(path, ...evidence(observation));
+          signal?.throwIfAborted();
+          if (!conditionMatched) {
+            await append({ index: index + 1, description: definition.description, status: 'skipped', conditionMatched, message: 'Step condition was false; no operations or checkpoints executed', evidence: [...evidence(observation), ...conditionEvidence], durationMs: Date.now() - started });
+            if (next.instructionId) await finishInstruction?.(next.instructionId, 'applied');
+            continue;
+          }
+          conditionAccepted = true;
+        }
         if (definition.launchPackage) await driver.launch(deviceId, brand<string, 'AppPackageName'>(definition.launchPackage));
         if (definition.openUrl) await driver.openUrl(deviceId, definition.openUrl);
         if (definition.action) {
@@ -156,7 +174,7 @@ export async function executeFlow({ context, driver, flow, signal, resetAppData,
         }
         await verify();
         signal?.throwIfAborted();
-        await append({ index: index + 1, description: definition.description, status: 'passed', ...(definition.echo ? { output: definition.echo } : {}), evidence: evidence(observation), durationMs: Date.now() - started });
+        await append({ index: index + 1, description: definition.description, status: 'passed', ...(conditionMatched !== undefined ? { conditionMatched } : {}), ...(definition.echo ? { output: definition.echo } : {}), evidence: [...evidence(observation), ...conditionEvidence], durationMs: Date.now() - started });
         if (next.instructionId) await finishInstruction?.(next.instructionId, 'applied');
       } catch (error) {
         let message = String(error);
@@ -165,7 +183,7 @@ export async function executeFlow({ context, driver, flow, signal, resetAppData,
           try {
             observation = await driver.observe(deviceId);
             await context.evidence.saveObservation(`failure-${index + 1}`, observation);
-            if (definition.recovery) {
+            if (definition.recovery && conditionAccepted) {
               recoveryEvidence.push(...evidence(observation), 'recovery.jsonl');
               const attempts = await recoverStep({ context, driver, policy: definition.recovery, step: index + 1, signal, verify,
                 observe: current => { observation = current; recoveryEvidence.push(...evidence(current)); } });
@@ -183,14 +201,14 @@ export async function executeFlow({ context, driver, flow, signal, resetAppData,
           }
         }
         await append({ index: index + 1, description: definition.description, status: signal?.aborted ? 'cancelled' : recovered ? 'passed' : 'failed', message,
-          evidence: [...new Set([...evidence(observation), ...recoveryEvidence])], durationMs: Date.now() - started });
+          ...(conditionMatched !== undefined ? { conditionMatched } : {}), evidence: [...new Set([...evidence(observation), ...recoveryEvidence, ...conditionEvidence])], durationMs: Date.now() - started });
         if (next.instructionId) await finishInstruction?.(next.instructionId, recovered ? 'applied' : 'failed', message);
         if (recovered && !signal?.aborted) continue;
         break;
       } finally {
         if (marked) await capture?.markStep?.(index + 1, 'end');
         const result = steps.at(-1);
-        if (result?.index === index + 1 && result.status === 'passed') {
+        if (result?.index === index + 1 && (result.status === 'passed' || result.status === 'skipped')) {
           const evidenceSha256 = await fingerprintProgressEvidence(root, result.evidence ?? []);
           completed.push({ item: next, result, evidenceSha256 });
           active = undefined;
@@ -234,7 +252,7 @@ export async function executeFlow({ context, driver, flow, signal, resetAppData,
     await append({ index: steps.length + 1, description: 'Restore file fixtures', status: 'failed', message: String(error), evidence: ['fixtures/summary.json'] });
   }
   if (progressError) await append({ index: steps.length + 1, description: 'Save Flow progress', status: 'failed', message: String(progressError), evidence: [] });
-  const status = cleanupFailed ? 'failed' : signal?.aborted ? 'cancelled' : !setupFailed && steps.length === expectedStepCount && steps.every(s => s.status === 'passed') ? 'passed' : 'failed';
+  const status = cleanupFailed ? 'failed' : signal?.aborted ? 'cancelled' : !setupFailed && steps.length === expectedStepCount && steps.every(s => s.status === 'passed' || s.status === 'skipped') ? 'passed' : 'failed';
   const recording: Record<string, string> = {};
   for (const name of ['actions.jsonl', 'flow.json', 'steps.jsonl']) recording[name] = createHash('sha256').update(await readFile(join(root, name))).digest('hex');
   if (collectEnvironment && !setupFailed) recording['environment.json'] = createHash('sha256').update(await readFile(join(root, 'environment.json'))).digest('hex');

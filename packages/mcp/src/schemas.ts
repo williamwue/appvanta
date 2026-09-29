@@ -24,6 +24,7 @@ const conditions = [
 ];
 const present = (names: string[]) => ({ anyOf: names.map(name => ({ required: [name] })) });
 const stepProperties = {
+  when: { oneOf: conditions.filter(condition => (condition.properties as Record<string, { const?: string }>).kind?.const !== 'screen-stable') },
   description: string, action: ref('action'), launchPackage: packageName,
   openUrl: { type: 'string', format: 'http-url' },
   echo: { type: 'string', minLength: 1, maxLength: 10000 }, assertText: string, assertTarget: ref('semanticTarget'), timeoutMs: integer(1, 3600000), recovery: ref('recovery'),
