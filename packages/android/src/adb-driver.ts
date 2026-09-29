@@ -138,17 +138,38 @@ export class AdbDriver implements DeviceDriver {
   }
 
   public async observe(deviceId: DeviceId): Promise<Observation> {
+    this.signal?.throwIfAborted();
     await mkdir(this.artifactsDirectory, { recursive: true });
-    const timestamp = Date.now().toString();
-    const screenshotPath = join(this.artifactsDirectory, `screenshot-${timestamp}.png`);
-    const uiTreePath = join(this.artifactsDirectory, `ui-${timestamp}.xml`);
-    const screenshot = await this.runBinary(["-s", deviceId, "exec-out", "screencap", "-p"]);
-    await writeFile(screenshotPath, screenshot);
-    const uiTree = await this.run(["-s", deviceId, "exec-out", "uiautomator", "dump", "/dev/tty"]);
-    await writeFile(uiTreePath, uiTree, "utf8");
-    const uiDescriptionPath = join(this.artifactsDirectory, `ui-${timestamp}.json`);
-    await writeFile(uiDescriptionPath, JSON.stringify(parseUiTree(uiTree), null, 2), 'utf8');
-    return { capturedAt: new Date().toISOString(), screenshotPath, uiTreePath, uiDescriptionPath, metadata: { deviceId } };
+    const observationId = `${Date.now()}-${randomUUID()}`;
+    const observationAttemptsPath = join(this.artifactsDirectory, `observation-${observationId}.json`);
+    const attempts: Array<{ index: number; screenshotPath: string; uiTreePath: string; status: string; error?: string }> = [];
+    for (let index = 1; index <= 3; index++) {
+      this.signal?.throwIfAborted();
+      const suffix = `${observationId}-${index}`;
+      const screenshotPath = join(this.artifactsDirectory, `screenshot-${suffix}.png`);
+      const uiTreePath = join(this.artifactsDirectory, `ui-${suffix}.xml`);
+      const screenshot = await this.runBinary(["-s", deviceId, "exec-out", "screencap", "-p"]);
+      await writeFile(screenshotPath, screenshot);
+      const uiTree = await this.run(["-s", deviceId, "exec-out", "uiautomator", "dump", "/dev/tty"]);
+      await writeFile(uiTreePath, uiTree, "utf8");
+      const attempt = { index, screenshotPath, uiTreePath, status: 'captured' } as (typeof attempts)[number];
+      attempts.push(attempt);
+      const saveAttempts = () => writeFile(observationAttemptsPath, JSON.stringify({ version: 1, deviceId, attempts }, null, 2));
+      if (uiTree.trim() === 'ERROR: null root node returned by UiTestAutomationBridge.') {
+        attempt.status = 'transient-null-root'; await saveAttempts();
+        if (index === 3) throw new Error('UI tree unavailable after 3 attempts: null root node');
+        await delay(250, undefined, this.signal ? { signal: this.signal } : {});
+        continue;
+      }
+      let tree: UiTree;
+      try { tree = parseUiTree(uiTree); }
+      catch (error) { attempt.status = 'failed'; attempt.error = String(error); await saveAttempts(); throw error; }
+      const uiDescriptionPath = join(this.artifactsDirectory, `ui-${suffix}.json`);
+      await writeFile(uiDescriptionPath, JSON.stringify(tree, null, 2), 'utf8');
+      attempt.status = 'passed'; await saveAttempts();
+      return { capturedAt: new Date().toISOString(), screenshotPath, uiTreePath, uiDescriptionPath, metadata: { deviceId, uiObservationAttempts: String(index), observationAttemptsPath } };
+    }
+    throw new Error('UI observation attempts exhausted');
   }
 
   public async execute(deviceId: DeviceId, action: Action): Promise<ActionResult> {
