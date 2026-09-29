@@ -1,7 +1,7 @@
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { createHash, randomUUID } from 'node:crypto';
-import { mkdir, open, readFile } from 'node:fs/promises';
+import { mkdir, open, readFile, readdir } from 'node:fs/promises';
 import { join } from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
 
@@ -69,6 +69,21 @@ export async function restoreEmulatorShake(adb: string, device: string, recordPa
     await handle.writeFile(JSON.stringify({ version: 1, device, sourceSha256, restored, restoredAt: new Date().toISOString() }, null, 2));
     await handle.sync();
   } finally { await handle.close(); }
+}
+
+/** Caller must hold the device lease for the entire operation and recovery. */
+export async function recoverEmulatorShakes(adb: string, device: string, directory: string): Promise<void> {
+  let entries;
+  try { entries = await readdir(directory, { withFileTypes: true }); }
+  catch (error) { if ((error as NodeJS.ErrnoException).code === 'ENOENT') return; throw error; }
+  const pattern = /^shake-\d+-[a-f0-9-]{36}\.json$/;
+  for (const entry of entries) {
+    if (!entry.isFile() || (!pattern.test(entry.name) && !pattern.test(entry.name.replace(/\.restored\.json$/, '')))) throw new Error('Unrecognized emulator sensor recovery evidence');
+    if (entry.name.endsWith('.restored.json') && !entries.some(source => source.name === entry.name.slice(0, -'.restored.json'.length))) throw new Error('Orphan emulator sensor restoration receipt');
+  }
+  for (const entry of entries.filter(entry => pattern.test(entry.name)).sort((a, b) => a.name.localeCompare(b.name))) {
+    await restoreEmulatorShake(adb, device, join(directory, entry.name));
+  }
 }
 
 /** Caller must hold the device lease for the entire operation and recovery. */

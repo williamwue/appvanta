@@ -33,6 +33,7 @@ export interface FlowOptions {
   readonly drainInstructions?: () => Promise<readonly { readonly id: string; readonly step: FlowStep }[]>;
   readonly finishInstruction?: (id: string, status: 'applied' | 'failed', error?: string) => Promise<void>;
   readonly beforeStep?: () => Promise<void>;
+  readonly restoreActionState?: () => Promise<void>;
 }
 export interface FlowCaptureSession {
   stop(): Promise<void>;
@@ -40,7 +41,7 @@ export interface FlowCaptureSession {
 }
 
 /** The sole Flow execution path for both interactive and asynchronous adapters. */
-export async function executeFlow({ context, driver, flow, signal, resetAppData, startNetwork, startCapture, startDiagnostics, collectEnvironment, startFixtures, startInputMethod, startPermissions, startAppOps, drainInstructions, finishInstruction, beforeStep }: FlowOptions) {
+export async function executeFlow({ context, driver, flow, signal, resetAppData, startNetwork, startCapture, startDiagnostics, collectEnvironment, startFixtures, startInputMethod, startPermissions, startAppOps, drainInstructions, finishInstruction, beforeStep, restoreActionState }: FlowOptions) {
   const root = context.rootDirectory;
   const deviceId = context.device.id;
   const steps: ReportStep[] = [];
@@ -177,9 +178,11 @@ export async function executeFlow({ context, driver, flow, signal, resetAppData,
         await append({ index: index + 1, description: definition.description, status: 'passed', ...(conditionMatched !== undefined ? { conditionMatched } : {}), ...(definition.echo ? { output: definition.echo } : {}), evidence: [...evidence(observation), ...conditionEvidence], durationMs: Date.now() - started });
         if (next.instructionId) await finishInstruction?.(next.instructionId, 'applied');
       } catch (error) {
+        const restorationUnverified = !!error && typeof error === 'object' && 'code' in error && error.code === 'APPVANTA_RESTORATION_UNVERIFIED';
+        if (restorationUnverified) cleanupFailed = true;
         let message = String(error);
         let recovered = false;
-        if (!signal?.aborted) {
+        if (!signal?.aborted && !restorationUnverified) {
           try {
             observation = await driver.observe(deviceId);
             await context.evidence.saveObservation(`failure-${index + 1}`, observation);
@@ -230,6 +233,10 @@ export async function executeFlow({ context, driver, flow, signal, resetAppData,
       cleanupFailed = true;
       await append({ index: steps.length + 1, description: 'Finalize network capture', status: 'failed', message: String(error), evidence: ['network/summary.json', 'logs/network-session.txt'] });
     }
+  }
+  if (restoreActionState) try { await restoreActionState(); } catch (error) {
+    cleanupFailed = true;
+    await append({ index: steps.length + 1, description: 'Restore action state', status: 'failed', message: String(error), evidence: ['fixtures/emulator-sensors'] });
   }
   if (diagnostics) try { await diagnostics.stop(); } catch (error) {
     cleanupFailed = true;

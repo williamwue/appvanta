@@ -12,6 +12,7 @@ import { AdbDriver } from './adb-driver.js';
 import { startNetwork } from './network-session.js';
 import { startRuntimePermissions } from './permission-fixture.js';
 import { resetApplicationData } from './app-data-reset.js';
+import { recoverEmulatorShakes } from './emulator-sensors.js';
 
 /** onRunCreated may persist run/task metadata only. It must reject if that
  * persistence is incomplete; device or other external changes belong in a
@@ -38,8 +39,9 @@ export async function runAndroidFlow(serial: string, input: unknown, signal?: Ab
     }
     throw error;
   }
-  const flowDriver = new AdbDriver({ artifactsDirectory: resolve(context.rootDirectory, 'artifacts'), ...(signal ? { signal } : {}) });
-  const result = await executeFlow({ context, driver: flowDriver, flow, resetAppData: resetApplicationData, startAppOps, startPermissions: startRuntimePermissions, startInputMethod: startImeFixture, startFixtures: startFileFixtures, collectEnvironment: () => collectFlowEnvironment(flowDriver, device.id, flow), startNetwork, startCapture: startFlowCapture, startDiagnostics: startFlowDiagnostics, ...(instructions ? { drainInstructions: () => instructions.drain(), finishInstruction: (id: string, status: 'applied' | 'failed', error?: string) => instructions.finish(id, status, error), ...(instructions.beforeStep ? { beforeStep: () => instructions.beforeStep!() } : {}) } : {}), ...(signal ? { signal } : {}) });
+  const sensorRecoveryDirectory = resolve(context.rootDirectory, 'fixtures', 'emulator-sensors');
+  const flowDriver = new AdbDriver({ artifactsDirectory: resolve(context.rootDirectory, 'artifacts'), sensorRecoveryDirectory, ...(signal ? { signal } : {}) });
+  const result = await executeFlow({ context, driver: flowDriver, flow, restoreActionState: () => recoverEmulatorShakes('adb', serial, sensorRecoveryDirectory), resetAppData: resetApplicationData, startAppOps, startPermissions: startRuntimePermissions, startInputMethod: startImeFixture, startFixtures: startFileFixtures, collectEnvironment: () => collectFlowEnvironment(flowDriver, device.id, flow), startNetwork, startCapture: startFlowCapture, startDiagnostics: startFlowDiagnostics, ...(instructions ? { drainInstructions: () => instructions.drain(), finishInstruction: (id: string, status: 'applied' | 'failed', error?: string) => instructions.finish(id, status, error), ...(instructions.beforeStep ? { beforeStep: () => instructions.beforeStep!() } : {}) } : {}), ...(signal ? { signal } : {}) });
   if (result.cleanupFailed) await retainDeviceLockForCleanup(serial, result.runDirectory);
   return result;
   });

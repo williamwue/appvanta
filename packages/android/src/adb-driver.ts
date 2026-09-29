@@ -1,5 +1,6 @@
 import { captureArtifact } from './capture.js';
 import { textShareArguments } from './text-share.js';
+import { shakeEmulator } from './emulator-sensors.js';
 import { matchAnrStack } from './anr-stacks.js';
 import { parseRuntimeIncidents } from './runtime-diagnostics.js';
 import { createHash, randomUUID } from 'node:crypto';
@@ -28,6 +29,7 @@ export interface AdbDriverOptions {
   readonly adbPath?: string;
   readonly artifactsDirectory: string;
   readonly signal?: AbortSignal;
+  readonly sensorRecoveryDirectory?: string;
 }
 
 export type PermissionState = "allow" | "deny" | "foreground" | "default" | "unknown";
@@ -46,11 +48,13 @@ export class AdbDriver implements DeviceDriver {
   private readonly adbPath: string;
   private readonly artifactsDirectory: string;
   private readonly signal: AbortSignal | undefined;
+  private readonly sensorRecoveryDirectory: string | undefined;
 
   public constructor(options: AdbDriverOptions) {
     this.adbPath = options.adbPath ?? "adb";
     this.artifactsDirectory = options.artifactsDirectory;
     this.signal = options.signal;
+    this.sensorRecoveryDirectory = options.sensorRecoveryDirectory;
   }
 
   public async listDevices(): Promise<readonly Device[]> {
@@ -175,6 +179,11 @@ export class AdbDriver implements DeviceDriver {
   public async execute(deviceId: DeviceId, action: Action): Promise<ActionResult> {
     const startedAt = new Date().toISOString();
     switch (action.kind) {
+      case 'shake': {
+        if (!this.sensorRecoveryDirectory) throw new Error('shake requires a managed Android Flow; use run_flow');
+        await shakeEmulator(this.adbPath, deviceId, this.sensorRecoveryDirectory, action, this.signal);
+        break;
+      }
       case "tap": {
         const point = await this.resolvePoint(deviceId, action.target);
         await this.run(["-s", deviceId, "shell", "input", "tap", `${point.x}`, `${point.y}`]);

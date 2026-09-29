@@ -53,7 +53,8 @@ export type Action =
   | { readonly kind: 'multi-touch'; readonly strokes: readonly { readonly points: readonly Point[] }[]; readonly durationMs: number }
   | { readonly kind: "back" }
   | { readonly kind: "button"; readonly button: HardwareButton }
-  | { readonly kind: "rotate"; readonly orientation: Orientation }
+    | { readonly kind: "rotate"; readonly orientation: Orientation }
+    | { readonly kind: 'shake'; readonly axis: 'x' | 'y' | 'z'; readonly amplitude: number; readonly cycles: number; readonly intervalMs: number }
   | { readonly kind: "wait"; readonly condition: Condition; readonly timeoutMs: number }
   | { readonly kind: "restart-app" };
 

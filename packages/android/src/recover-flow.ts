@@ -10,6 +10,7 @@ import { recoverAppOps } from './appops-fixture.js';
 import { recoverCaptures } from './capture.js';
 import { recoverNetworkSession } from './network-session.js';
 import { recoverRuntimePermissions } from './permission-fixture.js';
+import { recoverEmulatorShakes } from './emulator-sensors.js';
 
 /** Restore recorded external state, not business actions or execution progress. */
 export async function recoverAndroidFlow(deviceId: string, expectedToken: string) {
@@ -161,6 +162,7 @@ async function recoverAndroidState(deviceId: string, lease: Readonly<DeviceLease
     const steps: { fixture: string; status: string; error?: string }[] = [];
     const save = () => writeFile(join(directory, `${attempt}.json`), JSON.stringify({ version: 1, deviceId, token: lease.token, scope: 'environment-cleanup', steps }, null, 2));
     const jobs: [string, boolean, () => Promise<void>][] = [
+      ['emulator-sensors', true, () => recoverEmulatorShakes('adb', deviceId, join(root, 'fixtures', 'emulator-sensors'))],
       ['capture', !!flow.capture, async () => { await recoverCaptures('adb', deviceId, root); }],
       ['network', !!flow.network, async () => { await recoverNetworkSession('adb', deviceId, root); }],
       ['appops', !!flow.appOps, () => recoverAppOps(deviceId, root)],

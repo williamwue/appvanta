@@ -17,17 +17,27 @@ mock.module('node:child_process', { namedExports: { ...childProcess, execFile: (
   assert(['set', 'get'].includes(operation));
   queueMicrotask(() => callback(null, { stdout: operation === 'set' ? 'OK\n' : `acceleration = ${current.join(':')}\nOK\n`, stderr: '' }));
 } } });
-const { restoreEmulatorShake, accelerationSequence } = await import('../../dist/emulator-sensors.js');
+const { restoreEmulatorShake, recoverEmulatorShakes, accelerationSequence } = await import('../../dist/emulator-sensors.js');
 const root = await mkdtemp(join(tmpdir(), 'appvanta-sensor-recovery-'));
 try {
-  const path = join(root, 'shake.json');
+  const path = join(root, 'shake-1-00000000-0000-0000-0000-000000000000.json');
   const options = { axis: 'x', amplitude: 12, cycles: 1, intervalMs: 100 };
   const record = { version: 1, device, original, sequence: accelerationSequence(original, options), options };
   if (scenario === 'invalid-sequence') record.sequence[0][0] = 11;
   const bytes = JSON.stringify(record);
   await writeFile(path, bytes);
   const receipt = JSON.stringify({ version: 1, device, sourceSha256: createHash('sha256').update(bytes).digest('hex'), restored: original, restoredAt: new Date().toISOString() });
-  if (scenario === 'completed-later-change') {
+  if (scenario === 'orphan-receipt' || scenario === 'unexpected-file') {
+    await writeFile(join(root, scenario === 'orphan-receipt' ? 'shake-2-00000000-0000-0000-0000-000000000000.json.restored.json' : 'unexpected.txt'), receipt);
+    await assert.rejects(recoverEmulatorShakes('adb', device, root), /Orphan|Unrecognized/);
+    assert.equal(calls.length, 0);
+  } else if (scenario === 'directory-restore') {
+    await recoverEmulatorShakes('adb', device, root);
+    assert.deepEqual(current, original);
+    const count = calls.length;
+    await recoverEmulatorShakes('adb', device, root);
+    assert.equal(calls.length, count);
+  } else if (scenario === 'completed-later-change') {
     await writeFile(`${path}.restored.json`, receipt);
     await restoreEmulatorShake('adb', device, path);
     assert.equal(calls.length, 0, 'Completed recovery must not touch a later device state');

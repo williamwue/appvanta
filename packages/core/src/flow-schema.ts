@@ -98,6 +98,11 @@ export function parseAction(value: unknown): Action {
   const a = object(value);
   switch (a.kind) {
     case 'back': keys(a, ['kind']); return { kind: a.kind };
+    case 'shake': {
+      keys(a, ['kind', 'axis', 'amplitude', 'cycles', 'intervalMs']);
+      if (!['x', 'y', 'z'].includes(a.axis as string)) throw new Error('Unsupported shake axis');
+      return { kind: a.kind, axis: a.axis as 'x' | 'y' | 'z', amplitude: number(a.amplitude, 1, 30), cycles: number(a.cycles, 1, 20), intervalMs: number(a.intervalMs, 50, 1000) };
+    }
     case 'button': {
       keys(a, ['kind', 'button']);
       const buttons = ['home', 'back', 'power', 'volume-up', 'volume-down', 'mute', 'app-switch', 'enter', 'menu', 'dpad-up', 'dpad-down', 'dpad-left', 'dpad-right', 'dpad-center'] as const;

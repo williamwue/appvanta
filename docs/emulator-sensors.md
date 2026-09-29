@@ -1,6 +1,12 @@
-# 模拟器摇动底层实现与验收边界
+# 模拟器摇动与恢复
 
-Android Emulator 的 [sensor 控制台接口](https://developer.android.com/studio/run/emulator-console) 可以读取与设置三轴 acceleration。当前 `packages/android/src/emulator-sensors.ts` 提供内部摇动与恢复辅助函数，尚未导出到稳定 SDK 或接入 Flow/MCP 动作。
+Android Emulator 的 [sensor 控制台接口](https://developer.android.com/studio/run/emulator-console) 可以读取与设置三轴 acceleration。`packages/android/src/emulator-sensors.ts` 提供内部摇动与恢复辅助函数；受管理的 Android Flow 已接入 `shake` 动作，可通过 CLI `run-flow` 和 MCP `run_flow` 执行。独立 `execute_action` 不接受无运行绑定的摇动，返回使用受管理 Flow 的提示。
+
+```json
+{"name":"Emulator shake","steps":[{"description":"Shake and restore","action":{"kind":"shake","axis":"x","amplitude":12,"cycles":3,"intervalMs":150}}]}
+```
+
+Flow 动作参数均需明确填写，幅度、周期和间隔为整数。动作恢复记录保存在运行目录 `fixtures/emulator-sensors`，Flow 最终清理及标准 `recover-flow` 都校验并恢复该目录。恢复冲突会保留租约；动作报告恢复无法确认时，不再执行声明的业务重试或后续步骤。恢复只还原环境，不重放被中断的摇动或其他业务动作。目录中的未知文件、非普通文件及缺失原记录的回执会导致保守拒绝。
 
 摇动先读取原始三轴值，再生成指定轴的正负交替偏移，保留另外两轴及原始重力分量。幅度限制 1–30，周期 1–20，采样间隔 50–1000 毫秒。仅接受 `emulator-N` 序列号；读取必须包含完整向量和 OK，写入必须确认 OK 并读回。数值比较容差为 0.0001，与控制台打印精度相容；这不是物理传感器精度保证。
 
@@ -12,7 +18,7 @@ Android Emulator 的 [sensor 控制台接口](https://developer.android.com/stud
 
 应用回调补充：独立测试 APK `dev.appvanta.sensorprobe` 注册加速度传感器，将带会话 ID 的事件写到应用私有文件，经 `adb run-as` 读取。API 37 初次报告 `.appvanta/runs/sensor-events-1790708531028/verification.json` 包含 113 条实际事件，X 轴约为 -12 到 +12，原值恢复。最终脚本先停止探针再读取日志，保留 APK 摘要和原始事件；API 35 托管任务已接入，结果需绑定实际提交。
 
-尚未完成：任意应用摇动检测器响应、Flow/MCP 动作及标准恢复入口接入、宿主强杀与设备断连恢复、多轴/多设备和真机/OEM。当前不得把单一探针成功当作完整产品摇动能力已验收。
+尚未完成：任意应用摇动检测器响应、设备断连恢复、多轴/多设备和真机/OEM；独立动作入口目前要求改用受管理 Flow。当前不得把单一探针或单台模拟器成功当作完整产品摇动能力已验收。
 
 外部冲突实测：API 37 报告 `emulator-shake-1790709228769/verification.json` 验证正常摇动、实际改变后的取消恢复，以及计划向量之外的 X=3 冲突。恢复函数拒绝覆盖该值，恢复记录字节不变且无成功回执；验证夹具在同一租约内清理自己注入的冲突并确认原值。此场景使用预置恢复记录，不代表已验证宿主强杀后的标准恢复准入。脚本也已接入 API 35 托管任务，结果需绑定后续运行。
 
@@ -21,3 +27,7 @@ Android Emulator 的 [sensor 控制台接口](https://developer.android.com/stud
 API 35 托管验收：公开快照 `7b65ebc`（本地 `06464fa`）的 [运行 36616671566](https://github.com/williamwue/appvanta/actions/runs/36616671566) 中 `Verify application accelerometer callbacks` 步骤通过，Android 任务及三个桌面系统任务均成功。当前已核验步骤结果，尚未下载独立核验该次原始事件归档；此结果仍不覆盖上述待办边界。
 
 恢复回执修正验收：新增 5 项测试在修复前全部失败、修复后通过，覆盖重复恢复、完成后状态变化、损坏/摘要不匹配的回执及计划不一致；Android 全套 83 项通过。API 37 报告 `emulator-shake-1790709439252/verification.json` 同时确认完成记录重试保留后续变化、未完成记录拒绝外部冲突，以及夹具最终恢复原值。测试注入不等于宿主强杀验收。
+
+受管理 Flow 验收：`node scripts/verify-shake-flow.mjs emulator-5554` 实际调用 CLI 与 MCP，并在观察到加速度改变后强杀独立 Flow 宿主，再以原租约 token 调用 `recover-flow`。API 37 首次证据 `shake-flow-1790709720793/verification.json` 证明原值恢复及租约释放。完整本地回归 core 108、Android 86、脚本 40 项通过。该脚本已加入 API 35 托管 CI，托管结果需绑定后续公开提交。
+
+最终 API 37 复验 `shake-flow-1790709833038/verification.json` 还在宿主强杀后注入外部冲突：首次标准恢复失败、原租约不变、没有成功回执；夹具移除自己的冲突后，同 token 恢复成功并释放租约。前一修订 `efde367` 的托管运行 `36618250185` 已成功，但不包含本轮 Flow 接入，不据此宣称本轮托管验收通过。

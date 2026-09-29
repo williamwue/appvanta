@@ -169,6 +169,9 @@ jobs:
           python scripts/build-segment-clock.py --fixture sensor-probe
           node scripts/verify-sensor-events.mjs emulator-5554
           node scripts/verify-emulator-shake.mjs emulator-5554
+      - name: Verify managed shake and owner crash recovery
+        timeout-minutes: 4
+        run: node scripts/verify-shake-flow.mjs emulator-5554
       - name: Verify real device screenshot SSIM gate
         timeout-minutes: 3
         run: node scripts/verify-device-visual.mjs emulator-5554
