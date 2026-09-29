@@ -7,6 +7,7 @@ import { setTimeout as delay } from 'node:timers/promises';
 import { isDeepStrictEqual } from 'node:util';
 
 const held = new AsyncLocalStorage<ReadonlyMap<string, string>>();
+const flowAdmissions = new AsyncLocalStorage<ReadonlyMap<string, string>>();
 const active = new Map<string, string>();
 const nested = new Map<string, Set<Promise<unknown>>>();
 const nestedFailed = new Set<string>();
@@ -144,6 +145,15 @@ export async function bindDeviceLockRun(deviceId: string, runDirectory: string, 
     await intent.writeFile(JSON.stringify({ version: 1, lease: state.lease, runDirectory: root, scope }));
     await intent.sync();
   } finally { await intent.close(); }
+  const admissionId = flowAdmissions.getStore()?.get(nestedKey(path, lease.token));
+  if (admissionId) {
+    if (scope !== 'android-flow') throw new Error('Android Flow admission requires an Android run binding');
+    const binding = await open(join(root, 'device-flow-admission.json'), 'wx');
+    try {
+      await binding.writeFile(JSON.stringify({ version: 1, deviceId, token: lease.token, admissionId, runDirectory: root }));
+      await binding.sync();
+    } finally { await binding.close(); }
+  }
   // The immutable run copy permits matching a retained lease to its evidence.
   await writeFile(join(root, 'device-lease.json'), JSON.stringify(lease, null, 2), { flag: 'wx' });
   const temporary = path + '.' + randomUUID() + '.tmp';
@@ -190,7 +200,7 @@ async function initializeAdmissions(path: string, token: string, deviceId: strin
   admissions.set(nestedKey(path, token), { next: 1, tail: Promise.resolve() });
 }
 
-async function appendAdmission(path: string, token: string, deviceId: string, kind: 'pending' | 'resolved', id: string, operation: 'nested' | 'run-created-callback'): Promise<void> {
+async function appendAdmission(path: string, token: string, deviceId: string, kind: 'pending' | 'resolved', id: string, operation: 'nested' | 'android-flow' | 'run-created-callback'): Promise<void> {
   const state = admissions.get(nestedKey(path, token));
   if (!state) throw new Error('Device admission journal is unavailable');
   const append = async () => {
@@ -220,7 +230,11 @@ async function appendAdmission(path: string, token: string, deviceId: string, ki
 
 /** Validate the complete token-specific journal before any device recovery command. */
 export async function inspectDeviceAdmissionJournal(lease: Readonly<DeviceLease>, directory = lockDirectory()): Promise<'legacy' | 'resolved' | 'unresolved'> {
-  if (lease.version === 1) return 'legacy';
+  return (await readDeviceAdmissionJournal(lease, directory)).status;
+}
+
+async function readDeviceAdmissionJournal(lease: Readonly<DeviceLease>, directory: string) {
+  if (lease.version === 1) return { status: 'legacy' as const, pending: new Map<string, string>(), intents: [] as string[], digestSha256: '' };
   const path = leasePath(lease.deviceId, directory);
   const journal = admissionPath(path, lease.token);
   const contents = await readFile(journal, 'utf8');
@@ -238,7 +252,7 @@ export async function inspectDeviceAdmissionJournal(lease: Readonly<DeviceLease>
       if (record.kind !== 'init' || Object.keys(record).length !== 5) throw new Error('Invalid device admission journal initialization');
       continue;
     }
-    if ((record.kind !== 'pending' && record.kind !== 'resolved') || typeof record.id !== 'string' || !/^[a-f0-9-]{36}$/.test(record.id) || (record.operation !== 'nested' && record.operation !== 'run-created-callback') || Object.keys(record).length !== 7) throw new Error('Invalid device admission journal record');
+    if ((record.kind !== 'pending' && record.kind !== 'resolved') || typeof record.id !== 'string' || !/^[a-f0-9-]{36}$/.test(record.id) || (record.operation !== 'nested' && record.operation !== 'android-flow' && record.operation !== 'run-created-callback') || Object.keys(record).length !== 7) throw new Error('Invalid device admission journal record');
     if (record.kind === 'pending') {
       if (seen.has(record.id)) throw new Error('Duplicate device admission journal operation');
       seen.add(record.id);
@@ -248,14 +262,33 @@ export async function inspectDeviceAdmissionJournal(lease: Readonly<DeviceLease>
       pending.delete(record.id);
     }
   }
-  return pending.size || intents.length ? 'unresolved' : 'resolved';
+  return { status: pending.size || intents.length ? 'unresolved' as const : 'resolved' as const,
+    pending, intents, digestSha256: createHash('sha256').update(contents).digest('hex') };
+}
+
+/** Evidence only: even a uniquely bound unfinished Flow still needs verified cleanup. */
+export async function inspectInterruptedAndroidFlowAdmission(lease: Readonly<DeviceLease>, directory = lockDirectory()) {
+  const journal = await readDeviceAdmissionJournal(lease, directory);
+  if (journal.status !== 'unresolved' || journal.intents.length || journal.pending.size !== 1 || !lease.runDirectory)
+    throw new Error('Expected one unfinished Android Flow admission without resolution intents');
+  const [admissionId, operation] = [...journal.pending][0]!;
+  if (operation !== 'android-flow') throw new Error('Unfinished admission is not a recorded Android Flow');
+  const root = await realpath(lease.runDirectory);
+  if (root !== lease.runDirectory) throw new Error('Android Flow run path changed');
+  const binding = JSON.parse(await readFile(join(root, 'device-flow-admission.json'), 'utf8'));
+  if (!isDeepStrictEqual(binding, { version: 1, deviceId: lease.deviceId, token: lease.token, admissionId, runDirectory: root }))
+    throw new Error('Android Flow admission binding mismatch');
+  const copy = JSON.parse(await readFile(join(root, 'device-lease.json'), 'utf8'));
+  const { cleanupRequired: _cleanup, ...identity } = lease;
+  if (!isDeepStrictEqual(copy, identity)) throw new Error('Android Flow lease binding mismatch');
+  return { admissionId, runDirectory: root, journalDigestSha256: journal.digestSha256 };
 }
 
 /** Admit work before invoking it. A resolved record means the caller's success
  * postcondition holds: nested operations must restore and verify any external
  * state they change before returning. Failed or uncertain work must reject.
  */
-async function admittedOperation<T>(deviceId: string, operation: () => Promise<T>, directory: string, operationKind: 'nested' | 'run-created-callback'): Promise<T> {
+async function admittedOperation<T>(deviceId: string, operation: () => Promise<T>, directory: string, operationKind: 'nested' | 'android-flow' | 'run-created-callback'): Promise<T> {
   const path = leasePath(deviceId, directory);
   const token = held.getStore()?.get(path);
   if (!token || active.get(path) !== token || closing.get(path) === token) throw new Error('Device lease is not held by an active operation');
@@ -266,7 +299,9 @@ async function admittedOperation<T>(deviceId: string, operation: () => Promise<T
     const id = randomUUID();
     await appendAdmission(path, token, deviceId, 'pending', id, operationKind);
     if (closing.get(path) === token) throw new Error('Device operation closed during admission');
-    const result = await operation();
+    const result = operationKind === 'android-flow'
+      ? await flowAdmissions.run(new Map([...(flowAdmissions.getStore() ?? []), [key, id]]), operation)
+      : await operation();
     await appendAdmission(path, token, deviceId, 'resolved', id, operationKind);
     return result;
   })();
@@ -275,7 +310,7 @@ async function admittedOperation<T>(deviceId: string, operation: () => Promise<T
   pending.add(work);
   try { return await work; }
   catch (error) {
-    if (operationKind === 'nested') nestedFailed.add(key);
+    if (operationKind !== 'run-created-callback') nestedFailed.add(key);
     else admissionFailed.add(key);
     throw error;
   }
@@ -410,6 +445,15 @@ async function finishOwnedOperation(deviceId: string, path: string, token: strin
  * verified any external state it changed; uncertain restoration must reject.
  */
 export async function withDeviceLock<T>(deviceId: string, operation: () => Promise<T>, directory = lockDirectory()): Promise<T> {
+  return withTypedDeviceLock(deviceId, operation, directory, 'nested');
+}
+
+/** Recorded Android Flow ownership; this label alone never authorizes recovery. */
+export async function withAndroidFlowDeviceLock<T>(deviceId: string, operation: () => Promise<T>, directory = lockDirectory()): Promise<T> {
+  return withTypedDeviceLock(deviceId, operation, directory, 'android-flow');
+}
+
+async function withTypedDeviceLock<T>(deviceId: string, operation: () => Promise<T>, directory: string, kind: 'nested' | 'android-flow'): Promise<T> {
   const path = leasePath(deviceId, directory);
   const scopedToken = held.getStore()?.get(path);
   if (scopedToken && active.get(path) === scopedToken) {
@@ -418,7 +462,7 @@ export async function withDeviceLock<T>(deviceId: string, operation: () => Promi
     if (active.get(path) === scopedToken && closing.get(path) !== scopedToken && state?.lease.token === scopedToken && state.lease.pid === process.pid && state.lease.host === hostname() && state.lease.processToken === processToken) {
       if (state.lease.cleanupRequired) throw new Error(`Device busy: ${deviceId}; cleanup required`);
       const key = nestedKey(path, scopedToken);
-      try { return await admittedOperation(deviceId, operation, directory, 'nested'); }
+      try { return await admittedOperation(deviceId, operation, directory, kind); }
       catch (error) { nestedFailed.add(key); throw error; }
     }
     // This call began while the scoped owner was active. Losing that owner

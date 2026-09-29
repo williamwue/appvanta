@@ -44,6 +44,8 @@ export async function continueAdjudicatedAndroidTask(store: TaskStore, predecess
   const reserved = await readAdjudicatedSuccessorReservation(store, predecessorTaskId, receipt);
   const claim = prepared.claim;
   const reservation = reserved.reservation;
+  if (await store.cancellationRequested(reservation.successorTaskId))
+    throw new Error('Adjudicated successor cancellation requested');
   if (reservation.sourceTaskId !== claim.sourceTaskId || reservation.deviceId !== claim.abandonedLease.deviceId ||
     reservation.leaseToken !== claim.abandonedLease.token || reservation.preparationId !== claim.id ||
     !isDeepStrictEqual(reservation.flow, claim.flow))
@@ -61,6 +63,8 @@ export async function continueAdjudicatedAndroidTask(store: TaskStore, predecess
   let task = reconciled.task;
 
   const revalidateDeadLease = async () => {
+    if (await store.cancellationRequested(reservation.successorTaskId))
+      throw new Error('Adjudicated successor cancellation requested');
     const latest = await readAdjudicatedTaskContinuation(store, predecessorTaskId, receipt, options.lockDirectory);
     const latestReservation = await readAdjudicatedSuccessorReservation(store, predecessorTaskId, receipt);
     if (!isDeepStrictEqual(latest.claim, claim) || !isDeepStrictEqual(latestReservation.reservation, reservation))
@@ -80,8 +84,28 @@ export async function continueAdjudicatedAndroidTask(store: TaskStore, predecess
     task = task.status === 'running'
       ? await store.recoverReservedRunning(task.id, { id: reservation.id, digestSha256: markerDigest }, task.revision)
       : await store.claimReserved(task.id, { id: reservation.id, digestSha256: markerDigest }, task.revision);
+    const controller = new AbortController();
+    let cancelled = false;
+    const abort = () => { cancelled = true; controller.abort(options.signal?.reason); };
+    options.signal?.addEventListener('abort', abort, { once: true });
+    if (options.signal?.aborted) abort();
+    const poll = async () => {
+      if (await store.cancellationRequested(task.id)) {
+        cancelled = true;
+        controller.abort(new Error('Task cancellation requested'));
+      }
+    };
+    let polling: Promise<void> | undefined;
+    const checkCancellation = async () => {
+      await poll();
+      controller.signal.throwIfAborted();
+    };
+    const timer = setInterval(() => {
+      if (!polling) polling = poll().catch(error => controller.abort(error)).finally(() => { polling = undefined; });
+    }, 200);
     try {
-      const result = await runFlow(task.deviceId, claim.flow, options.signal, async root => {
+      await checkCancellation();
+      const result = await runFlow(task.deviceId, claim.flow, controller.signal, async root => {
         const lineage = {
           version: 1, kind: 'adjudicated-android-continuation',
           predecessorTaskId, sourceTaskId: claim.sourceTaskId, successorTaskId: task.id,
@@ -93,7 +117,8 @@ export async function continueAdjudicatedAndroidTask(store: TaskStore, predecess
         await writeFile(join(root, 'adjudicated-continuation.json'), JSON.stringify(lineage, null, 2), { flag: 'wx' });
         task.runDirectory = root;
         await store.save(task);
-      });
+      }, { drain: async () => [], finish: async () => {}, beforeStep: checkCancellation });
+      controller.signal.throwIfAborted();
       task.status = result.status;
       task.result = result;
       task.finishedAt = new Date().toISOString();
@@ -102,12 +127,16 @@ export async function continueAdjudicatedAndroidTask(store: TaskStore, predecess
       return { taskId: task.id, predecessorTaskId, sourceTaskId: claim.sourceTaskId, ...result };
     } catch (error) {
       if (!task.finishedAt) {
-        task.status = options.signal?.aborted ? 'cancelled' : 'failed';
+        task.status = cancelled ? 'cancelled' : 'failed';
         task.error = String(error);
         task.finishedAt = new Date().toISOString();
         await store.save(task);
       }
       throw error;
+    } finally {
+      clearInterval(timer);
+      await polling;
+      options.signal?.removeEventListener('abort', abort);
     }
   }, async () => {
     await revalidateDeadLease();

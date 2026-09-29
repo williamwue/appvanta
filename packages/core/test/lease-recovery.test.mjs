@@ -12,6 +12,37 @@ import { createHash, randomUUID } from 'node:crypto';
 import { hostname } from 'node:os';
 import { bindDeviceLockRun, inspectDeviceLock, inspectDeviceAdmissionJournal, recoverDeviceLock, continueRecoveredDevice, retainDeviceLockForCleanup, withDeviceLock, withDeviceLockAdmission } from '../dist/device-lock.js';
 import { createRunContext, executeFlow, parseFlow } from '../dist/index.js';
+import { withAndroidFlowDeviceLock, inspectInterruptedAndroidFlowAdmission } from '../dist/device-lock.js';
+
+test('Android Flow admission is distinct and unresolved work still retains ownership', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'appvanta-flow-admission-'));
+  const run = join(root, 'run'); await mkdir(run);
+  try {
+    await withDeviceLock('device', async () => {
+      await assert.rejects(withAndroidFlowDeviceLock('device', async () => {
+        await bindDeviceLockRun('device', run, root, 'android-flow');
+        const state = await inspectDeviceLock('device', root);
+        assert.equal(await inspectDeviceAdmissionJournal(state.lease, root), 'unresolved');
+        const path = join(root, createHash('sha256').update('device').digest('hex') + '.json.admission-' + state.lease.token + '.jsonl');
+        const entries = (await readFile(path, 'utf8')).trim().split('\n').map(JSON.parse);
+        assert.equal(entries[1].operation, 'android-flow');
+        const bound = await inspectInterruptedAndroidFlowAdmission(state.lease, root);
+        assert.equal(bound.admissionId, entries[1].id);
+        assert.equal(bound.runDirectory, await realpath(run));
+        assert.match(bound.journalDigestSha256, /^[a-f0-9]{64}$/);
+        throw new Error('unfinished flow');
+      }, root), /unfinished flow/);
+    }, root);
+    const state = await inspectDeviceLock('device', root);
+    assert.equal(state.lease.cleanupRequired.reason, 'nested-exit');
+    assert.equal(await inspectDeviceAdmissionJournal(state.lease, root), 'unresolved');
+    await inspectInterruptedAndroidFlowAdmission(state.lease, root);
+    const bindingPath = join(run, 'device-flow-admission.json');
+    const binding = JSON.parse(await readFile(bindingPath, 'utf8'));
+    await writeFile(bindingPath, JSON.stringify({ ...binding, admissionId: randomUUID() }));
+    await assert.rejects(inspectInterruptedAndroidFlowAdmission(state.lease, root), /binding mismatch/);
+  } finally { await rm(root, { recursive: true, force: true }); }
+});
 
 for (const scenario of ['admitted-nested', 'closing-admission', 'delayed-inspection', 'delayed-inspection-no-replacement', 'marker-write-failure', 'pending-write-denied', 'resolution-write-denied', 'resolution-sync-denied', 'delayed-admission-finalization', 'recovery-unlink-retry', 'normal-unlink-retry']) {
   test(`lease interleaving: ${scenario}`, async () => {

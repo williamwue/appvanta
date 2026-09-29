@@ -90,3 +90,20 @@ test('reserved running recovery requires no execution evidence and a dead owner'
     await assert.rejects(f.store.recoverReservedRunning(taskId, f.receipt, 2), /queued|execution evidence/);
   } finally { await rm(f.root, { recursive: true, force: true }); }
 });
+
+test('reserved claims reject durable cancellation without rewriting task state', async () => {
+  for (const status of ['queued', 'running']) {
+    const f = await fixture();
+    try {
+      const path = join(f.root, taskId, 'task.json');
+      const task = JSON.parse(await readFile(path, 'utf8'));
+      await writeFile(path, JSON.stringify({ ...task, status }));
+      const before = await readFile(path, 'utf8');
+      await writeFile(join(f.root, taskId, 'cancel.request'), '{}');
+      await assert.rejects(status === 'queued'
+        ? f.store.claimReserved(taskId, f.receipt, 2)
+        : f.store.recoverReservedRunning(taskId, f.receipt, 2), /cancel/i);
+      assert.equal(await readFile(path, 'utf8'), before);
+    } finally { await rm(f.root, { recursive: true, force: true }); }
+  }
+});

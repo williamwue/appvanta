@@ -5,7 +5,7 @@ import { collectFlowEnvironment } from './environment.js';
 import { startFlowDiagnostics } from './flow-diagnostics.js';
 import { startFlowCapture } from './flow-capture.js';
 import { resolve, relative } from 'node:path';
-import { bindDeviceLockRun, createRunContext, executeFlow, inspectDeviceLock, parseFlow, retainDeviceLockForCleanup, withDeviceLock, withDeviceLockAdmission, runOnDevices } from '@appvanta/core';
+import { bindDeviceLockRun, createRunContext, executeFlow, inspectDeviceLock, parseFlow, retainDeviceLockForCleanup, withAndroidFlowDeviceLock, withDeviceLockAdmission, runOnDevices } from '@appvanta/core';
 import { mkdir, realpath, writeFile } from 'node:fs/promises';
 import { randomUUID } from 'node:crypto';
 import { AdbDriver } from './adb-driver.js';
@@ -19,7 +19,7 @@ import { resetApplicationData } from './app-data-reset.js';
  */
 export async function runAndroidFlow(serial: string, input: unknown, signal?: AbortSignal, onRunCreated?: (root: string) => Promise<void>, instructions?: { drain(): Promise<readonly { readonly id: string; readonly step: import('@appvanta/core').FlowStep }[]>; finish(id: string, status: 'applied' | 'failed', error?: string): Promise<void>; beforeStep?(): Promise<void> }) {
   const flow = parseFlow(input);
-  return withDeviceLock(serial, async () => {
+  return withAndroidFlowDeviceLock(serial, async () => {
   signal?.throwIfAborted();
   const driver = new AdbDriver({ artifactsDirectory: resolve('.appvanta/probe'), ...(signal ? { signal } : {}) });
   const device = (await driver.listDevices()).find(d => d.id === serial && d.status === 'online');

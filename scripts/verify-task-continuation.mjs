@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
-import { spawn } from 'node:child_process';
+import { spawn, execFile } from 'node:child_process';
+import { promisify } from 'node:util';
 import { once } from 'node:events';
 import { createInterface } from 'node:readline';
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
@@ -16,6 +17,8 @@ const records = [];
 const transport = process.argv[3] ?? 'cli';
 const cancel = process.argv[4] === 'cancel';
 const crash = process.argv[4] === 'crash';
+const adjudicate = process.argv[5] === 'adjudicate';
+if (adjudicate && !crash) throw new Error('Adjudication scenario requires a crashed worker');
 if ((cancel || crash) && transport !== 'worker') throw new Error('Interruption scenario requires worker transport');
 if (!['cli', 'mcp', 'worker'].includes(transport)) throw new Error('Transport must be cli, mcp or worker');
 async function mcpContinue(args) {
@@ -88,6 +91,7 @@ async function cli(args) {
   try { const [code] = await once(child, 'exit'); return { code, stdout, stderr }; }
   finally { clearTimeout(timer); }
 }
+try {
 for (const mismatch of cancel || crash ? [true] : [false, true]) {
   const source = `
     import { TaskStore, parseFlow } from ${JSON.stringify(new URL('../packages/core/dist/index.js', import.meta.url).href)};
@@ -152,15 +156,60 @@ for (const mismatch of cancel || crash ? [true] : [false, true]) {
     assert.equal(link.sourceTaskId, message.taskId);
     assert.equal((await store.get(message.taskId)).status, 'interrupted');
     const duplicate = await cli(['continue-task', message.taskId, lease.lease.token, path]); assert.equal(duplicate.code, 1);
-    if (mismatch) {
+    let adjudication;
+    if (adjudicate) {
+      const invoke = async args => {
+        const response = await cli(args);
+        assert.equal(response.code, 0, JSON.stringify(response));
+        return JSON.parse(response.stdout);
+      };
+      const preview = await invoke(['preview-uncertain-task', task.id]);
+      const retained = await inspectDeviceLock(deviceId);
+      // The crashed step is a read-only wait. Observe System UI now before
+      // recording a replacement postcondition; do not claim the missing text appeared.
+      const observed = await promisify(execFile)('adb', ['-s', deviceId, 'shell', 'pidof', 'com.android.systemui'], { windowsHide: true, timeout: 10000 });
+      assert.match(observed.stdout.trim(), /^\d+( \d+)*$/);
+      await writeFile(join(directory, 'postcondition-observation.json'), JSON.stringify({ deviceId,
+        observedAt: new Date().toISOString(), packageName: 'com.android.systemui', pids: observed.stdout.trim() }));
+      const decisionPath = join(directory, 'decision.json');
+      await writeFile(decisionPath, JSON.stringify({ expectedPreviewDigestSha256: preview.previewDigestSha256,
+        expectedLeaseToken: retained.lease.token, operator: 'emulator-verifier',
+        reason: 'Interrupted read-only checkpoint is replaced with an explicit System UI checkpoint',
+        verdict: 'postcondition-verified-skip', postconditionCheckpoint: { kind: 'app-running', packageName: 'com.android.systemui' } }));
+      const decision = await invoke(['adjudicate-task', task.id, decisionPath]);
+      const expectation = { decisionId: decision.id, previewDigestSha256: preview.previewDigestSha256, leaseToken: retained.lease.token };
+      const expectationPath = join(directory, 'expectation.json');
+      await writeFile(expectationPath, JSON.stringify(expectation));
+      const preparation = await invoke(['prepare-adjudicated-task', task.id, expectationPath]);
+      const receiptPath = join(directory, 'receipt.json');
+      await writeFile(receiptPath, JSON.stringify({ ...expectation, preparationId: preparation.claim.id,
+        preparationDigestSha256: preparation.preparationDigestSha256 }));
+      const reserved = await invoke(['reserve-adjudicated-task', task.id, receiptPath]);
+      const continued = await invoke(['continue-adjudicated-task', task.id, receiptPath]);
+      assert.equal(continued.status, 'passed');
+      assert.equal(continued.taskId, reserved.task.id);
+      const finalTask = await store.get(continued.taskId);
+      assert.equal(finalTask.status, 'passed');
+      const finalSteps = (await readFile(join(finalTask.runDirectory, 'steps.jsonl'), 'utf8')).trim().split(/\r?\n/).map(JSON.parse);
+      assert.equal(finalSteps[0].description, 'Verify adjudicated postcondition on live device');
+      assert(!finalSteps.some(step => step.description === 'Completed Home action'));
+      assert(finalSteps.some(step => step.description === 'Remaining Back action' && step.status === 'passed'));
+      adjudication = { taskId: finalTask.id, runDirectory: finalTask.runDirectory, status: finalTask.status };
+    } else if (mismatch) {
       const retained = await inspectDeviceLock(deviceId); assert.equal(retained.owner, 'dead');
       const recovery = await cli(['recover-flow', deviceId, retained.lease.token]); assert.equal(recovery.code, 0, recovery.stderr);
     }
     assert.equal(await inspectDeviceLock(deviceId), null);
-    records.push({ mismatch, cancel, crash, sourceTaskId: message.taskId, sourceRun: message.root, taskId: task.id, runDirectory: task.runDirectory, status: task.status, steps: steps.length, mcpPid: result.mcpPid, workerPid: result.workerPid, cancellation: result.cancellation, notification: notification?.path });
+    records.push({ mismatch, cancel, crash, adjudication, sourceTaskId: message.taskId, sourceRun: message.root, taskId: task.id, runDirectory: task.runDirectory, status: task.status, steps: steps.length, mcpPid: result.mcpPid, workerPid: result.workerPid, cancellation: result.cancellation, notification: notification?.path });
     await writeFile(join(directory, 'verification.json'), JSON.stringify({ status: records.length === (cancel || crash ? 1 : 2) ? 'passed' : 'running', transport, records }, null, 2));
   } finally {
     if (owner.exitCode === null && owner.signalCode === null) { owner.kill('SIGKILL'); await exited; }
   }
+}
+} catch (error) {
+  const lease = await inspectDeviceLock(deviceId).catch(inspectError => ({ error: String(inspectError) }));
+  await writeFile(join(directory, 'verification.json'), JSON.stringify({ status: 'failed', deviceId,
+    transport, cancel, crash, adjudicate, records, error: String(error), retainedLease: lease }, null, 2));
+  throw error;
 }
 console.log(JSON.stringify({ status: 'passed', directory, records }, null, 2));

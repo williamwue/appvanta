@@ -254,6 +254,7 @@ export class TaskStore {
       }
       if (!claimLock) throw new Error('Reserved task claim lock changed repeatedly');
       try {
+      if (await this.cancellationRequested(id)) throw new Error('Reserved task cancellation requested');
       const marker = JSON.parse(await readFile(join(root, 'reservation.json'), 'utf8')) as Record<string, unknown>;
       if (marker.version !== 1 || marker.taskId !== id || marker.reservationId !== reservation.id ||
         marker.reservationDigestSha256 !== reservation.digestSha256 || marker.deviceId === undefined ||

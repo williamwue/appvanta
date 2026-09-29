@@ -122,3 +122,57 @@ test('a dead transferred lease still rejects the old adjudication receipt before
     assert.equal((await f.store.get(task.id)).status, 'interrupted');
   } finally { await rm(f.root, { recursive: true, force: true }); }
 });
+
+test('cancelled reserved successor is rejected before entering Android recovery', async () => {
+  const f = await executionFixture();
+  try {
+    await f.store.requestCancel(f.reservation.task.id);
+    const leaseBefore = await readFile(f.lockPath, 'utf8');
+    let touched = false;
+    await assert.rejects(continueAdjudicatedAndroidTask(f.store, f.successor.id, f.receipt, {
+      lockDirectory: join(f.root, 'locks'),
+      continueFlow: async () => { touched = true; throw new Error('Unexpected recovery'); },
+    }), /cancellation requested/);
+    assert.equal(touched, false);
+    assert.equal(await readFile(f.lockPath, 'utf8'), leaseBefore);
+    assert.equal((await f.store.get(f.reservation.task.id)).status, 'cancelling');
+  } finally { await rm(f.root, { recursive: true, force: true }); }
+});
+
+for (const mode of ['poll', 'step', 'caller', 'read-error']) {
+  test(`adjudicated execution stops on ${mode} and persists its outcome`, async () => {
+    const f = await executionFixture();
+    const caller = new AbortController();
+    try {
+      await assert.rejects(continueAdjudicatedAndroidTask(f.store, f.successor.id, f.receipt, {
+        lockDirectory: join(f.root, 'locks'), signal: caller.signal,
+        continueFlow: async (_device, _token, operation, beforeRecovery) => {
+          await beforeRecovery?.();
+          await save(f.lockPath, { ...f.oldLease, token: randomUUID(), pid: process.pid,
+            recoveredFrom: { token: f.oldLease.token, runDirectory: f.successorRun } });
+          return operation(f.successorRun);
+        },
+        runFlow: async (_device, _flow, signal, onRunCreated, controls) => {
+          const run = join(f.root, 'cancelled-run'); await mkdir(run); await onRunCreated(run);
+          if (mode === 'caller') caller.abort(new Error('caller cancelled'));
+          else if (mode === 'read-error') f.store.cancellationRequested = async () => { throw new Error('cancel read failed'); };
+          else await new TaskStore(f.store.directory).requestCancel(f.reservation.task.id);
+          if (mode === 'step') await controls.beforeStep();
+          await new Promise((resolve, reject) => {
+            const timeout = setTimeout(() => { signal.removeEventListener('abort', aborted); reject(new Error('abort timeout')); }, 3000);
+            const aborted = () => { clearTimeout(timeout); reject(signal.reason); };
+            signal.addEventListener('abort', aborted, { once: true });
+            if (signal.aborted) { signal.removeEventListener('abort', aborted); aborted(); }
+          });
+          throw new Error('execution continued after cancellation');
+        },
+      }), mode === 'read-error' ? /cancel read failed/ : /cancell/);
+      const task = JSON.parse(await readFile(join(f.store.directory, f.reservation.task.id, 'task.json'), 'utf8'));
+      assert.equal(task.status, mode === 'read-error' ? 'failed' : 'cancelled');
+      assert.ok(task.finishedAt);
+      assert.equal(task.runDirectory, join(f.root, 'cancelled-run'));
+      const lease = JSON.parse(await readFile(f.lockPath, 'utf8'));
+      assert.equal(lease.recoveredFrom.token, f.oldLease.token);
+    } finally { await rm(f.root, { recursive: true, force: true }); }
+  });
+}

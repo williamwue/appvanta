@@ -2,7 +2,7 @@ import { mkdir, readFile, realpath, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { homedir } from 'node:os';
-import { AuditLog, parseFlow, recoverDeviceLock, continueRecoveredDevice, inspectPendingDeviceBinding, inspectDeviceAdmissionJournal, type DeviceLease } from '@appvanta/core';
+import { AuditLog, parseFlow, recoverDeviceLock, continueRecoveredDevice, inspectPendingDeviceBinding, inspectDeviceAdmissionJournal, inspectInterruptedAndroidFlowAdmission, type DeviceLease } from '@appvanta/core';
 import { AdbDriver } from './adb-driver.js';
 import { recoverFileFixtures } from './file-fixtures.js';
 import { recoverImeFixture } from './ime-fixture.js';
@@ -40,10 +40,11 @@ async function requireManualRecovery(deviceId: string, lease: Readonly<DeviceLea
 }
 
 async function recoverAndroidState(deviceId: string, lease: Readonly<DeviceLease>) {
+    let interruptedFlow: Awaited<ReturnType<typeof inspectInterruptedAndroidFlowAdmission>> | undefined;
     if (lease.version === 2) {
       try {
         const state = await inspectDeviceAdmissionJournal(lease);
-        if (state !== 'resolved') throw new Error('Unresolved device admission journal operation');
+        if (state !== 'resolved') interruptedFlow = await inspectInterruptedAndroidFlowAdmission(lease);
       } catch (error) {
         let auditRoot = lease.runDirectory ?? lease.recoveredFrom?.runDirectory;
         if (!auditRoot) {
@@ -178,5 +179,14 @@ async function recoverAndroidState(deviceId: string, lease: Readonly<DeviceLease
     }
     if (steps.some(step => step.status === 'failed')) throw new Error(`Environment recovery incomplete; lease retained; evidence: ${join(directory, `${attempt}.json`)}`);
     await save();
+    if (interruptedFlow) {
+      const verified = await inspectInterruptedAndroidFlowAdmission(lease);
+      if (verified.admissionId !== interruptedFlow.admissionId || verified.runDirectory !== interruptedFlow.runDirectory ||
+        verified.journalDigestSha256 !== interruptedFlow.journalDigestSha256)
+        throw new Error('Interrupted Android Flow admission changed during cleanup');
+      await audit.append({ timestamp: new Date().toISOString(), actor: `appvanta-process:${process.pid}`,
+        action: 'recover-interrupted-flow-admission', target: deviceId, outcome: 'passed',
+        metadata: { ...verified, token: lease.token, cleanupEvidence: join(directory, `${attempt}.json`), scope: 'environment-cleanup-only' } });
+    }
     return { status: 'recovered', scope: 'environment-cleanup', runDirectory: root, evidence: join(directory, `${attempt}.json`), steps };
 }

@@ -1,8 +1,10 @@
 # AppVanta 当前状态与剩余任务
 
-更新：2026-09-28。本文件汇总当前有界验收；阶段清单中的逐次记录作为带日期的历史证据，旧段落中的“待完成”应结合本文件及后续验收读取。最终目标仍是覆盖固定版本 Argent / ARTEMIS 的全部公开可验证功能，不因本轮收尾缩小范围。以下 39 项清单保持完整，1 项已完成、38 项仍待办。
+更新：2026-09-29。本文件汇总当前有界验收；阶段清单中的逐次记录作为带日期的历史证据，旧段落中的“待完成”应结合本文件及后续验收读取。最终目标仍是覆盖固定版本 Argent / ARTEMIS 的全部公开可验证功能，不因本轮收尾缩小范围。以下 39 项清单保持完整，3 项已完成、36 项仍待办。
 
 Verification boundary correction (2026-09-29): integration 6697796 passed local tests (core 90, Android 52, scripts 33). Its running-task test retained the original lease instead of simulating the transferred lease left by a real worker crash. A regression now confirms that an old adjudication receipt is rejected against a dead transferred lease before device execution. Actual crash-after-running continuation therefore remains incomplete; missing task run/result/error fields alone do not prove safe recovery. Real-device/OEM acceptance remains unavailable; emulator evidence only. Package reinstall/uninstall and complete MCP response framing are implemented at ffb9d9c; same-version reinstall does not prove cross-version upgrade or schema migration.
+
+最新验收：`d46d165` 构建及 core 92、Android 58、脚本 36 项测试通过，四包安装/重装/卸载验证通过（doctor ready、49 个 MCP 工具）。API 37 / Android 17 上，真实后继 Worker 在只读等待中被强杀后，人工裁决 CLI 全链路通过，已完成 Home 未重复，剩余 Back 通过，最终租约释放。见 [裁决 CLI 与验收边界](adjudication-cli.md)。这不证明裁决后的新任务再次崩溃能恢复，也不覆盖任意不确定动作或全部环境夹具。API 35 的旧通用 nested 未决租约仍保留。此前公开提交 `0ca762d` 的 [托管 CI](https://github.com/williamwue/appvanta/actions/runs/36589798541) 四个任务均通过；下文初始发布失败记录属于历史状态。
 
 ## 本轮已完成的范围
 
@@ -48,7 +50,7 @@ Verification boundary correction (2026-09-29): integration 6697796 passed local 
 
 - [ ] P0-01：定位 API 37 历史异常退出根因；API 35 r9 安装及 AVD boot 已通过，不据此勾选整项。
 - [ ] P0-02：实测片段之间的精确媒体时间间隙、设备拔插/超时失败路径；双 API 长时动态分段、严格解码及采样时钟边界已通过，传输失败/取消/空或缺失文件已保守失败并保留可用设备证据，但不据此勾选整项。
-- [ ] P0-03：补后继任务创建后的重试、人工裁决不确定动作与重启后的安全续跑；core 的不确定后继只读预览及裁决准备记录读取均返回 `resumeAuthorized: false`，已记录的意图不构成可运行续跑。版本 2 租约快照兼容已通过，但受保护的真实检查点和后继执行仍待实现；历史无准备标记的租约仍不能自动释放。
+- [ ] P0-03：补裁决后新任务再次崩溃的安全恢复、更多不确定动作和环境夹具验收、MCP 裁决入口。CLI 预览/裁决/准备/预约/执行已接通，执行中取消已有测试，API 37 只读等待中断后的真实裁决续跑通过；准备记录本身仍不授权执行，历史无准备标记或通用 nested 未决租约不能自动释放。
 - [ ] P0-04：补网络/采集夹具恢复期间取消、超过重连期限、重复断线等故障组合；版本 2 租约日志已保守保留危险/不确定清理并拒绝迟到嵌套准入，但不据此勾选整项。
 - [ ] P0-05：整合本轮文档和功能提交后复核状态一致性；文档更新本身不使该项完成。
 
