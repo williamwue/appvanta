@@ -4,16 +4,20 @@ import { once } from 'node:events';
 import { mkdir, readFile, readdir, writeFile, stat } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
 import { inspectDeviceLock } from '../packages/core/dist/index.js';
-import { recoverAndroidFlow } from '../packages/android/dist/index.js';
+import { recoverAndroidFlow, continueAndroidFlow } from '../packages/android/dist/recover-flow.js';
 
 const device = process.argv[2]; assert(device, 'Device ID required');
+const cancelRecovery = process.argv[3] === 'cancel-recovery';
+if (process.argv[3] && !cancelRecovery) throw new Error('Unknown recovery scenario');
 const root = resolve('.appvanta/runs', `network-capture-recovery-${Date.now()}`); await mkdir(root, { recursive: true });
 const adb = (...args) => execFileSync(process.env.ADB_PATH || 'adb', ['-s', device, ...args], { encoding: 'utf8', windowsHide: true, timeout: 20000 }).trim();
 const originalProxy = adb('shell', 'settings', 'get', 'global', 'http_proxy');
-const flow = { name: 'Interrupted network and captures', network: { python: 'python', mitmdump: resolve('.appvanta/proxy-venv/Scripts/mitmdump.exe'), port: 18089 },
+const mitmdump = resolve(process.env.APPVANTA_MITMDUMP ?? '.appvanta/proxy-venv/Scripts/mitmdump.exe');
+assert((await stat(mitmdump)).isFile(), 'Set APPVANTA_MITMDUMP to the installed mitmdump executable');
+const flow = { name: 'Interrupted network and captures', network: { python: 'python', mitmdump, port: 18089 },
   capture: { screenSeconds: 180, perfettoSeconds: 60 }, steps: [{ description: 'Never execute after interruption', action: { kind: 'back' } }] };
 const code = `import {runAndroidFlow} from ${JSON.stringify(new URL('../packages/android/dist/index.js', import.meta.url).href)};
-let run;await runAndroidFlow(${JSON.stringify(device)},${JSON.stringify(flow)},undefined,async root=>{run=root;},{drain:async()=>[],finish:async()=>{},beforeStep:async()=>{process.send({run});await new Promise(()=>setInterval(()=>{},1000));}});`;
+let run;const result=await runAndroidFlow(${JSON.stringify(device)},${JSON.stringify(flow)},undefined,async root=>{run=root;},{drain:async()=>[],finish:async()=>{},beforeStep:async()=>{process.send({run});await new Promise(()=>setInterval(()=>{},1000));}});throw new Error(JSON.stringify(result));`;
 const owner = spawn(process.execPath, ['--input-type=module', '-e', code], { windowsHide: true, stdio: ['ignore', 'ignore', 'pipe', 'ipc'] });
 const exited = once(owner, 'exit'); let stderr = ''; owner.stderr.on('data', data => { stderr += data; });
 try {
@@ -27,6 +31,26 @@ try {
   assert(command.toLowerCase().replaceAll('\\', '/').includes(join(message.run, 'network').toLowerCase().replaceAll('\\', '/')));
   process.kill(network.workerPid, 'SIGKILL'); owner.kill('SIGKILL'); await exited;
   const state = await inspectDeviceLock(device); assert.equal(state.owner, 'dead'); assert.equal(state.lease.pid, owner.pid);
+  let cancellation;
+  if (cancelRecovery) {
+    const controller = new AbortController();
+    let timer, operationStarted = false, recoveryEntered = false;
+    try {
+      await assert.rejects(continueAndroidFlow(device, state.lease.token, async () => { operationStarted = true; }, async () => {
+        recoveryEntered = true;
+        timer = setTimeout(() => controller.abort(new Error('Verifier cancelled during cleanup')), 250);
+      }, controller.signal), /Verifier cancelled during cleanup/);
+    } finally { clearTimeout(timer); }
+    assert(recoveryEntered && controller.signal.aborted);
+    assert.equal(operationStarted, false);
+    assert.deepEqual((await inspectDeviceLock(device)).lease, state.lease, 'Cancelled cleanup must not transfer ownership');
+    assert.equal(adb('shell', 'settings', 'get', 'global', 'http_proxy'), originalProxy);
+    for (const name of (await readdir(join(message.run, 'captures'))).filter(name => name.endsWith('.capture.json'))) {
+      assert.equal(JSON.parse(await readFile(join(message.run, 'captures', name), 'utf8')).cleaned, true);
+    }
+    cancellation = { recoveryEntered, aborted: true, operationStarted, retainedToken: state.lease.token, proxyRestoredBeforeReturn: true, capturesCleanedBeforeReturn: true };
+    await writeFile(join(root, 'cancelled-recovery.json'), JSON.stringify(cancellation, null, 2));
+  }
   const result = await recoverAndroidFlow(device, state.lease.token);
   assert.deepEqual(result.steps.map(step => [step.fixture, step.status]), [['capture', 'passed'], ['network', 'passed']]);
   assert.equal(adb('shell', 'settings', 'get', 'global', 'http_proxy'), originalProxy);
@@ -47,8 +71,11 @@ try {
   assert.equal(captures.length, 2);
   assert.equal(await inspectDeviceLock(device), null);
   assert.notEqual(JSON.parse(await readFile(join(message.run, 'run.json'), 'utf8')).status, 'passed');
-  await writeFile(join(root, 'verification.json'), JSON.stringify({ status: 'passed', originalProxy, run: message.run, result, takeover, captures }, null, 2));
+  await writeFile(join(root, 'verification.json'), JSON.stringify({ status: 'passed', originalProxy, run: message.run, cancellation, result, takeover, captures }, null, 2));
   console.log(JSON.stringify({ status: 'passed', root }));
+} catch (error) {
+  await writeFile(join(root, 'verification.json'), JSON.stringify({ status: 'failed', error: String(error), originalProxy, lease: await inspectDeviceLock(device) }, null, 2));
+  throw error;
 } finally {
   if (owner.exitCode === null && owner.signalCode === null) { owner.kill('SIGKILL'); await exited; }
 }

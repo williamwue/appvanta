@@ -26,7 +26,8 @@ const fileFixture = process.argv[6] === 'file-fixture' || fileConflict;
 const restartViaMcp = process.argv[7] === 'restart-boundary-mcp';
 const restartBoundary = process.argv[7] === 'restart-boundary' || restartViaMcp;
 const repeatAdjudication = process.argv[7] === 'repeat-adjudication';
-const transferBeforeBind = process.argv[7] === 'transfer-before-bind';
+const repeatedTransfer = process.argv[7] === 'repeat-transfer-before-bind';
+const transferBeforeBind = process.argv[7] === 'transfer-before-bind' || repeatedTransfer;
 if (process.argv[7] && !restartBoundary && !repeatAdjudication && !transferBeforeBind) throw new Error('Unknown restart scenario');
 if ((restartBoundary || repeatAdjudication || transferBeforeBind) && !adjudicate) throw new Error('Restart requires adjudication');
 if (process.argv[6] && !fileFixture) throw new Error('Unknown fixture scenario');
@@ -268,11 +269,15 @@ for (const mismatch of cancel || crash ? [true] : [false, true]) {
       let continued;
       let repeatedLineage;
       if (transferBeforeBind) {
+        let retryToken;
+        const killedLeases = [];
+        for (let attempt = 0; attempt < (repeatedTransfer ? 3 : 1); attempt++) {
         const code = `
           import { TaskStore } from ${JSON.stringify(new URL('../packages/core/dist/index.js', import.meta.url).href)};
           import { continueAdjudicatedAndroidTask } from ${JSON.stringify(new URL('../packages/android/dist/index.js', import.meta.url).href)};
           import { readFile } from 'node:fs/promises';
           await continueAdjudicatedAndroidTask(new TaskStore(${JSON.stringify(store.directory)}), ${JSON.stringify(task.id)}, JSON.parse(await readFile(${JSON.stringify(receiptPath)}, 'utf8')), {
+            ...${JSON.stringify(retryToken ? { transferRetryToken: retryToken } : {})},
             runFlow: async () => {
               process.send({ taskId: ${JSON.stringify(reserved.task.id)} });
               await new Promise(() => setInterval(() => {}, 1000));
@@ -285,14 +290,17 @@ for (const mismatch of cancel || crash ? [true] : [false, true]) {
           assert.equal(ready.taskId, reserved.task.id);
           const current = await inspectDeviceLock(deviceId);
           assert.equal(current.lease.pid, child.pid);
-          assert.equal(current.lease.recoveredFrom.token, expectation.leaseToken);
+          assert.equal(current.lease.recoveredFrom.token, retryToken ?? expectation.leaseToken);
           assert.equal((await store.get(reserved.task.id)).runDirectory, undefined);
           child.kill('SIGKILL'); await exit;
         } finally { if (child.exitCode === null && child.signalCode === null) { child.kill('SIGKILL'); await exit; } }
+        const killed = await inspectDeviceLock(deviceId); assert.equal(killed.owner, 'dead');
+        killedLeases.push(killed.lease); retryToken = killed.lease.token;
+        }
         const current = await inspectDeviceLock(deviceId); assert.equal(current.owner, 'dead');
         await assert.rejects(invoke(['continue-adjudicated-task', task.id, receiptPath]), /exact abandoned successor device lease/);
         continued = await invoke(['continue-adjudicated-task', task.id, receiptPath, current.lease.token]);
-        await writeFile(join(directory, 'unstarted-transfer.json'), JSON.stringify({ killedLease: current.lease, successorTaskId: reserved.task.id, retriedTaskId: continued.taskId }, null, 2));
+        await writeFile(join(directory, 'unstarted-transfer.json'), JSON.stringify({ killedLease: current.lease, killedLeases, successorTaskId: reserved.task.id, retriedTaskId: continued.taskId }, null, 2));
       } else if (restartBoundary || repeatAdjudication) {
         const code = `
           import { TaskStore } from ${JSON.stringify(new URL('../packages/core/dist/index.js', import.meta.url).href)};

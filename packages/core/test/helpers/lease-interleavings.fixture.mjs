@@ -15,6 +15,7 @@ let releaseMkdir;
 const mkdirGate = new Promise(resolve => { releaseMkdir = resolve; });
 let admissionFault;
 let initializationFault;
+let predecessorFault;
 let verifyTransferJournal = false;
 let journalBeforeTransfer = false;
 let appendCount = 0;
@@ -32,6 +33,9 @@ mock.module('node:fs/promises', { namedExports: {
   rename: async (from, to) => {
     if (verifyTransferJournal && String(from).endsWith('.tmp')) {
       const next = JSON.parse(await fs.readFile(from, 'utf8'));
+      const predecessor = JSON.parse(await fs.readFile(`${to}.predecessor-${next.token}.json`, 'utf8'));
+      assert.deepEqual(predecessor, JSON.parse(await fs.readFile(to, 'utf8')));
+      assert.equal(predecessor.token, next.recoveredFrom.token);
       const journal = await fs.readFile(`${to}.admission-${next.token}.jsonl`, 'utf8');
       assert.deepEqual(JSON.parse(journal), { version: 1, sequence: 0, token: next.token, deviceId: next.deviceId, kind: 'init' });
       journalBeforeTransfer = true;
@@ -50,6 +54,14 @@ mock.module('node:fs/promises', { namedExports: {
     return fs.unlink(path);
   },
   open: async (...args) => {
+    if (predecessorFault && String(args[0]).includes('.predecessor-') && args[1] === 'wx') {
+      const handle = await fs.open(...args);
+      return {
+        writeFile: (...values) => predecessorFault === 'write' ? Promise.reject(new Error('predecessor snapshot write failed')) : handle.writeFile(...values),
+        sync: () => Promise.reject(new Error('predecessor snapshot sync failed')),
+        close: () => handle.close(),
+      };
+    }
     if (initializationFault && String(args[0]).includes('.admission-') && args[1] === 'wx') {
       const handle = await fs.open(...args);
       return {
@@ -93,7 +105,7 @@ mock.module('node:fs/promises', { namedExports: {
 const { withDeviceLock, bindDeviceLockRun, retainDeviceLockForCleanup, inspectDeviceLock, recoverDeviceLock } = await import('../../dist/device-lock.js');
 const root = await fs.mkdtemp(join(tmpdir(), `appvanta-${scenario}-`));
 try {
-  if (['transfer-init-write-failure', 'transfer-init-sync-failure', 'transfer-journal-before-publication'].includes(scenario)) {
+  if (['transfer-init-write-failure', 'transfer-init-sync-failure', 'transfer-predecessor-write-failure', 'transfer-predecessor-sync-failure', 'transfer-journal-before-publication'].includes(scenario)) {
     const module = new URL('../../dist/device-lock.js', import.meta.url).href;
     await promisify(execFile)(process.execPath, ['--input-type=module', '-e',
       `import { withDeviceLock } from ${JSON.stringify(module)}; await withDeviceLock('device', async () => process.exit(0), process.argv[1]);`, root], { windowsHide: true, timeout: 10000 });
@@ -102,12 +114,13 @@ try {
     const { continueRecoveredDevice, inspectDeviceAdmissionJournal } = await import('../../dist/device-lock.js');
     let invoked = false;
     if (scenario !== 'transfer-journal-before-publication') {
-      initializationFault = scenario === 'transfer-init-write-failure' ? 'write' : 'sync';
-      await assert.rejects(continueRecoveredDevice('device', before.lease.token, async () => {}, async () => { invoked = true; }, root), /journal initialization/);
+      if (scenario.includes('predecessor')) predecessorFault = scenario.includes('-write-') ? 'write' : 'sync';
+      else initializationFault = scenario === 'transfer-init-write-failure' ? 'write' : 'sync';
+      await assert.rejects(continueRecoveredDevice('device', before.lease.token, async () => {}, async () => { invoked = true; }, root), /journal initialization|predecessor snapshot/);
       assert.equal(invoked, false);
       assert.deepEqual(await inspectDeviceLock('device', root), before);
       assert.equal(await inspectDeviceAdmissionJournal(before.lease, root), 'resolved');
-      initializationFault = undefined;
+      initializationFault = undefined; predecessorFault = undefined;
     }
     verifyTransferJournal = true;
     await continueRecoveredDevice('device', before.lease.token, async () => {}, async () => {

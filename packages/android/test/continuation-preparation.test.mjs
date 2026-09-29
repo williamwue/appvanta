@@ -8,7 +8,7 @@ import { tmpdir } from 'node:os';
 import { createHash } from 'node:crypto';
 import { inspectDeviceLock } from '../../core/dist/index.js';
 
-test('dead Android preparation lease recovers only with matching predecessor and no binding intent', async () => {
+for (const transfers of [1, 3]) test(`dead Android preparation recovers after ${transfers} transfers only with matching evidence`, async () => {
   const root = await mkdtemp(join(tmpdir(), 'appvanta-preparation-'));
   const run = join(root, 'run'), locks = join(root, 'locks'); await mkdir(run);
   const env = { ...process.env, APPVANTA_LOCK_DIRECTORY: locks };
@@ -23,9 +23,11 @@ test('dead Android preparation lease recovers only with matching predecessor and
   try {
     await start(`import {withDeviceLock,bindDeviceLockRun} from ${JSON.stringify(module)};
       await withDeviceLock('preparation',async()=>{await bindDeviceLockRun('preparation',${JSON.stringify(run)});process.send('ready');await new Promise(()=>setInterval(()=>{},1000));});`);
+    for (let index = 0; index < transfers; index++) {
     const old = (await inspectDeviceLock('preparation', locks)).lease;
     await start(`import {continueRecoveredDevice} from ${JSON.stringify(module)};
       await continueRecoveredDevice('preparation',${JSON.stringify(old.token)},async()=>{},async()=>{process.send('transferred');await new Promise(()=>setInterval(()=>{},1000));},undefined,'android-flow');`);
+    }
     const state = await inspectDeviceLock('preparation', locks);
     assert.equal(state.owner, 'dead'); assert.equal(state.lease.runDirectory, await realpath(run));
     assert.equal(state.lease.preparationScope, 'android-flow');

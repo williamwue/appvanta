@@ -113,3 +113,43 @@ MCP 证据：`.appvanta/runs/task-continuation-1790699188718/verification.json`�
 CLI 证据：`.appvanta/runs/task-continuation-1790699244988/verification.json`。
 各目录的 `unstarted-transfer.json` 保留被强杀进程的租约及重试前后相同的任务 ID。
 这覆盖单次转移后尚未准入的崩溃，不覆盖运行绑定进行中、连续多次未绑定转移或真机/OEM。
+
+写入副作用验收尝试（2026-09-30，未通过）：新增 `scripts/verify-adjudicated-volume.mjs`，
+在真实音量按键驱动返回、步骤完成记录落盘前暂停并强杀，独立读取音量后才允许裁决。
+API 37 的音量加请求虽出现在 AudioService 日志中，读取的音乐音量仍为 5，未满足增加一次的前提，因此没有进入裁决，不能作为避免重复写入的成功证据。
+失败记录保留于 `.appvanta/runs/adjudicated-volume-1790699773104/verification.json`。
+该中断运行随后通过 `recover-flow` 显式清理；此前夹具未规范化 Flow 的失败运行也已通过该入口清理。
+更早的准备试验使用 `media_session --set` 后发现读写路由不一致（speaker 读回 5，usb_headset 记录 3），缺少该路由修改前快照，不能声明全部音频设备状态已恢复。
+当前验收脚本已移除该准备写入，只读取原值，并在成功情况下用反向按键恢复读回值。
+该模拟器上的音量副作用尚未确认，后续需要可独立核对内容的输入场景；P0-03 保持未完成。
+
+Markor 输入副作用验收（2026-09-30，API 37）已通过：
+`node scripts/verify-adjudicated-input.mjs emulator-5554`。
+验收创建独立文件，临时 AppOps 授权记录原状态；先在输入前的步骤边界中断，再启动后继。
+后继实际执行 ASCII 文本输入，驱动返回后、Flow 完成记录写入前由验收钩子暂停并强杀。
+此时进度为 executing；独立读取编辑器全文，确认标记仅出现一次，移除标记后的文本与原文精确相等。
+裁决使用新的预览摘要及当前租约，检查点要求该标记在界面可见；文件名与标记不同，避免标题误匹配。
+CLI 续跑跳过输入，仅完成新的检查点、剩余保存及最终证据步骤；设备文件与中断时编辑器全文相等，没有重复标记。
+最终停止 Markor，核对文件未被外部修改后仅删除本次文件，恢复 AppOps，设备租约为空。
+证据：`.appvanta/runs/adjudicated-input-1790700200422/verification.json` 和同目录 `fixtures/appops.json`。
+先前验收器直接在存活父进程中预约导致子 CLI 被正确拒绝的记录 `adjudicated-input-1790700100818` 保留；父进程退出后，同回执完成恢复，见其 `manual-retry-verification.json`。
+这证明单次 Markor ASCII 输入中断后的避免重放与保存，不覆盖其他编辑器、Unicode 输入、并发外部编辑或所有环境夹具；P0-03 仍未完成。
+
+同日 Unicode 补充验收通过：`node scripts/verify-adjudicated-input.mjs emulator-5554 unicode`。
+载荷包含中文、café、换行、单双引号、`& < > %s ; $()`；验收通过 UI 树解析器还原 XML 转义，比较完整输入和原文，而非只查找标记。
+输入经 AppVanta IME 桥接实际提交；真实进程强杀点位于驱动返回之后、Flow 步骤完成记录之前。
+驱动返回时及裁决续跑后，默认输入法和启用列表均与验收前一致，原本未启用的 AppVanta 输入法没有残留启用。
+剩余保存步骤完成，最终文件与观察文本精确匹配，测试文件删除、AppOps 恢复，设备租约为空。
+证据：`.appvanta/runs/adjudicated-input-1790700376759/verification.json`。
+这不覆盖 IME COMMIT 尚未返回或输入法清理过程中强杀，不证明其他编辑器或任意 Unicode 字符均通过。
+
+连续未绑定转移恢复（2026-09-30）：每次转移在新租约发布前以独占创建方式同步保存前驱租约快照。
+显式重试读取当前 token 对应的前驱链，逐段验证设备、来源路径、仅初始化的日志、无绑定意图和无清理标记；缺失快照、token 不匹配、循环、中间已准入操作均拒绝。
+读取上限为 1024 段，超过上限拒绝自动恢复；未改变原回执及预约任务身份。
+Android 准备阶段清理也使用该链证明，从而支持多次转移后仍未绑定运行的情况。
+写入/同步前驱快照失败时原租约保持不变，后继执行不启动；对应故障注入测试通过。
+完整测试 core 95、Android 74、脚本 36 项通过后，新增两个快照故障场景的 core lease-recovery 31 项聚焦测试通过。
+API 37 实测 `node scripts/verify-task-continuation.mjs emulator-5554 worker crash mcp-adjudicate file-fixture repeat-transfer-before-bind` 通过。
+验收连续强杀三个已转移且已认领同一预约任务、尚未准入 Flow 的进程，再用原回执和最新 token 经 MCP 完成执行；文件恢复且租约释放。
+证据：`.appvanta/runs/task-continuation-1790700678778/verification.json`；同目录 `unstarted-transfer.json` 保存三份被强杀租约及重试任务 ID。
+以上补充取代早期“不支持连续未绑定转移”的实现边界；历史缺失快照的多段链仍拒绝，运行绑定进行中或 IME 内部未决操作不在此次验收范围。

@@ -169,10 +169,17 @@ async function unstartedTransfer(f) {
   return { lease, journal, init };
 }
 
-test('explicit unstarted transfer retry keeps the reserved task and original execution receipt', async () => {
+for (const depth of [1, 3]) test(`explicit unstarted transfer retry at depth ${depth} keeps the task and original receipt`, async () => {
   const f = await executionFixture();
   try {
-    const { lease } = await unstartedTransfer(f);
+    let { lease } = await unstartedTransfer(f);
+    for (let index = 1; index < depth; index++) {
+      const previous = lease;
+      lease = { ...lease, token: randomUUID(), recoveredFrom: { token: previous.token, runDirectory: f.successorRun } };
+      await save(`${f.lockPath}.predecessor-${lease.token}.json`, previous);
+      await save(f.lockPath, lease);
+      await writeFile(`${f.lockPath}.admission-${lease.token}.jsonl`, JSON.stringify({ version: 1, sequence: 0, token: lease.token, deviceId: lease.deviceId, kind: 'init' }) + '\n');
+    }
     const result = await continueAdjudicatedAndroidTask(f.store, f.successor.id, f.receipt, {
       lockDirectory: join(f.root, 'locks'), transferRetryToken: lease.token,
       continueFlow: async (_device, token, operation, beforeRecovery) => {
@@ -220,6 +227,32 @@ for (const fault of ['live-owner', 'wrong-token', 'cleanup', 'binding', 'source-
         : fault === 'pending' || fault === 'resolved-work' ? /admitted work/ : /not an unstarted/);
       assert.equal(touched, false);
       assert.equal(await readFile(f.lockPath, 'utf8'), before);
+    } finally { await rm(f.root, { recursive: true, force: true }); }
+  });
+}
+
+for (const fault of ['missing-predecessor', 'wrong-predecessor', 'ancestor-binding', 'ancestor-work', 'cycle']) {
+  test(`transfer chain rejects ${fault} before recovery`, async () => {
+    const f = await executionFixture();
+    try {
+      const { lease, journal, init } = await unstartedTransfer(f);
+      const current = { ...lease, token: randomUUID(), recoveredFrom: { token: lease.token, runDirectory: f.successorRun } };
+      await save(f.lockPath, current);
+      await writeFile(`${f.lockPath}.admission-${current.token}.jsonl`, JSON.stringify({ ...init, token: current.token }) + '\n');
+      if (fault !== 'missing-predecessor') await save(`${f.lockPath}.predecessor-${current.token}.json`, {
+        ...lease, ...(fault === 'wrong-predecessor' ? { token: randomUUID() } : {}),
+        ...(fault === 'cycle' ? { recoveredFrom: { token: current.token, runDirectory: f.successorRun } } : {}),
+      });
+      if (fault === 'cycle') await save(`${f.lockPath}.predecessor-${lease.token}.json`, current);
+      if (fault === 'ancestor-binding') await writeFile(`${f.lockPath}.binding-${lease.token}.json`, '');
+      if (fault === 'ancestor-work') await writeFile(journal, JSON.stringify(init) + '\n' + JSON.stringify({ ...init, sequence: 1, kind: 'pending', id: randomUUID(), operation: 'android-flow' }) + '\n');
+      let touched = false;
+      await assert.rejects(continueAdjudicatedAndroidTask(f.store, f.successor.id, f.receipt, {
+        lockDirectory: join(f.root, 'locks'), transferRetryToken: current.token,
+        continueFlow: async () => { touched = true; throw new Error('Unexpected recovery'); },
+      }), fault === 'missing-predecessor' ? /ENOENT/ : fault === 'wrong-predecessor' ? /predecessor mismatch/
+        : fault === 'ancestor-binding' ? /binding intent/ : fault === 'ancestor-work' ? /admitted work/ : /not an unstarted/);
+      assert.equal(touched, false);
     } finally { await rm(f.root, { recursive: true, force: true }); }
   });
 }

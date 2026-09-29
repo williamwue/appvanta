@@ -2,7 +2,7 @@ import { mkdir, readFile, realpath, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { homedir } from 'node:os';
-import { AuditLog, parseFlow, recoverDeviceLock, continueRecoveredDevice, inspectPendingDeviceBinding, inspectDeviceAdmissionJournal, inspectInterruptedAndroidFlowAdmission, type DeviceLease } from '@appvanta/core';
+import { AuditLog, parseFlow, recoverDeviceLock, continueRecoveredDevice, inspectPendingDeviceBinding, inspectDeviceAdmissionJournal, inspectInterruptedAndroidFlowAdmission, inspectUnstartedDeviceTransfer, type DeviceLease } from '@appvanta/core';
 import { AdbDriver } from './adb-driver.js';
 import { recoverFileFixtures } from './file-fixtures.js';
 import { recoverImeFixture } from './ime-fixture.js';
@@ -66,8 +66,10 @@ async function recoverAndroidState(deviceId: string, lease: Readonly<DeviceLease
       const source = await realpath(lease.recoveredFrom!.runDirectory!);
       if (source !== lease.recoveredFrom!.runDirectory) throw new Error('Continuation source path changed');
       const predecessor = JSON.parse(await readFile(join(source, 'device-lease.json'), 'utf8'));
-      if (predecessor.token !== lease.recoveredFrom!.token || predecessor.deviceId !== deviceId || predecessor.runDirectory !== source)
+      if (predecessor.deviceId !== deviceId || predecessor.runDirectory !== source)
         throw new Error('Continuation predecessor binding mismatch');
+      if (predecessor.token !== lease.recoveredFrom!.token)
+        await inspectUnstartedDeviceTransfer(predecessor, lease.token);
       let pending;
       try { pending = await inspectPendingDeviceBinding(deviceId, lease); }
       catch (error) {

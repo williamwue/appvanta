@@ -147,3 +147,21 @@ MCP 同步 Flow 使用同一验收器，加 `--mcp`：
 ```
 
 2026-09-16 三项均通过，运行目录分别为 `2026-09-16T03-17-33-021Z-emulator-5554-6d93fb19`、`2026-09-16T03-18-12-772Z-emulator-5554-9c958e26`、`2026-09-16T03-18-32-203Z-emulator-5554-e2b01584`。均保存代理恢复结果。客户端收到 Flow `status=failed` 表示业务失败，MCP 服务进程本身正常退出不代表 Flow 成功。
+
+2026-09-30 API 37 补充了恢复期间取消验收：设置 `APPVANTA_MITMDUMP` 为本机已有可执行文件后，运行
+`node scripts/verify-network-capture-recovery.mjs emulator-5554 cancel-recovery`。
+宿主与网络 Worker 强杀后，在接管清理开始 250 毫秒时触发取消；恢复仍完成录屏、Perfetto 和代理清理，之后返回取消错误。
+验收确认后续操作没有启动、原租约 token 没有转移、代理与采集在返回前已恢复；随后用原 token 显式恢复并释放租约。
+证据：`.appvanta/runs/network-capture-recovery-1790700941425/verification.json` 及同目录 `cancelled-recovery.json`。
+这是 API 恢复路径上的真实模拟器验收，未模拟 USB 断线或主机重启。
+
+代理重连期限现在在每条 ADB 命令之前检查。回归测试证明旧实现会在一次读取耗尽期限后继续写入并报告成功；修复后超时即拒绝发出后续写入。
+另有重复断线测试覆盖首次读取失败、恢复写入后读回失败、重连发现原值已恢复的路径，确认只写入一次。
+`python -m unittest test_proxy_recovery.py test_network_finalization.py` 共 8 项通过；这些时间与断线注入测试不替代真实设备拔插验收。
+
+发行包恢复代码与真实设备设置的组合验收：`node scripts/verify-proxy-reconnect.mjs emulator-5554` 在 API 37 通过。
+验收先保存真实代理值，临时写入本地测试代理，然后调用 `packages/android/dist/runtime/proxy_recovery.py`。
+重复断线场景在首次读取及恢复写入后的读回处注入传输异常，第三次尝试确认原值已恢复，恢复写入总计一次。
+期限场景持续注入不可用错误，1 秒期限后拒绝继续，真实设备仍保留测试代理且日志没有 restored；解除注入后重新恢复原值。
+最终代理与原值相同，设备租约释放。证据：`.appvanta/runs/proxy-reconnect-1790701189151/verification.json`。
+传输错误在 ADB 回调边界注入；成功命令实际访问模拟器，未断开真实 ADB 连接，不作为 USB 拔插或主机重启的验收。

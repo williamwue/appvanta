@@ -10,7 +10,10 @@ def restore_proxy(adb, original, session, journal, seconds=60):
     while True:
         attempts += 1
         def call(*args):
-            return adb(*args, timeout=min(20, max(0.1, deadline - time.monotonic())))
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                raise TimeoutError('Proxy recovery deadline exhausted')
+            return adb(*args, timeout=min(20, remaining))
         try:
             current = call('shell', 'settings', 'get', 'global', 'http_proxy')
             if current != original:

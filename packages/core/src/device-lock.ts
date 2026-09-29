@@ -109,6 +109,14 @@ async function clearCompletedRecoveryGuard(path: string): Promise<void> {
   catch (error) { if (codeIs(error, 'ENOENT')) return; throw error; }
   await unlink(stale);
 }
+function validateDeviceLease(lease: DeviceLease, deviceId: string): void {
+  if (!lease || lease.version !== 1 && lease.version !== 2 || lease.deviceId !== deviceId || typeof lease.token !== 'string' || !/^[a-f0-9-]{36}$/.test(lease.token) || !Number.isSafeInteger(lease.pid) || lease.pid < 1 || typeof lease.host !== 'string' || typeof lease.startedAt !== 'string' || !Number.isFinite(Date.parse(lease.startedAt))) throw new Error('Invalid device lease; refusing recovery');
+  if (lease.runDirectory !== undefined && (typeof lease.runDirectory !== 'string' || !isAbsolute(lease.runDirectory))) throw new Error('Invalid lease run directory');
+  if (lease.recoveredFrom !== undefined && (!lease.recoveredFrom || typeof lease.recoveredFrom.token !== 'string' || !/^[a-f0-9-]{36}$/.test(lease.recoveredFrom.token) || lease.recoveredFrom.token === lease.token || lease.recoveredFrom.runDirectory !== undefined && (typeof lease.recoveredFrom.runDirectory !== 'string' || !isAbsolute(lease.recoveredFrom.runDirectory)))) throw new Error('Invalid predecessor lease metadata');
+  if (lease.processToken !== undefined && (typeof lease.processToken !== 'string' || !/^[a-f0-9-]{36}$/.test(lease.processToken))) throw new Error('Invalid lease process token');
+  if (lease.cleanupRequired !== undefined && (!lease.runDirectory || lease.cleanupRequired.runDirectory !== lease.runDirectory || !Number.isFinite(Date.parse(lease.cleanupRequired.recordedAt)) || lease.cleanupRequired.reason !== undefined && !['explicit', 'operation-exit', 'nested-exit'].includes(lease.cleanupRequired.reason))) throw new Error('Invalid cleanup-required lease metadata');
+}
+
 export async function inspectDeviceLock(deviceId: string, directory = lockDirectory()): Promise<{ lease: DeviceLease; owner: 'alive' | 'dead' | 'unknown' } | null> {
   let lease: DeviceLease;
   try { lease = JSON.parse(await readFile(leasePath(deviceId, directory), 'utf8')) as DeviceLease; }
@@ -116,11 +124,7 @@ export async function inspectDeviceLock(deviceId: string, directory = lockDirect
     if (error && typeof error === 'object' && 'code' in error && error.code === 'ENOENT') return null;
     throw error;
   }
-  if (!lease || lease.version !== 1 && lease.version !== 2 || lease.deviceId !== deviceId || typeof lease.token !== 'string' || !/^[a-f0-9-]{36}$/.test(lease.token) || !Number.isSafeInteger(lease.pid) || lease.pid < 1 || typeof lease.host !== 'string' || typeof lease.startedAt !== 'string' || !Number.isFinite(Date.parse(lease.startedAt))) throw new Error('Invalid device lease; refusing recovery');
-  if (lease.runDirectory !== undefined && (typeof lease.runDirectory !== 'string' || !isAbsolute(lease.runDirectory))) throw new Error('Invalid lease run directory');
-  if (lease.recoveredFrom !== undefined && (!lease.recoveredFrom || typeof lease.recoveredFrom.token !== 'string' || !/^[a-f0-9-]{36}$/.test(lease.recoveredFrom.token) || lease.recoveredFrom.token === lease.token || lease.recoveredFrom.runDirectory !== undefined && (typeof lease.recoveredFrom.runDirectory !== 'string' || !isAbsolute(lease.recoveredFrom.runDirectory)))) throw new Error('Invalid predecessor lease metadata');
-  if (lease.processToken !== undefined && (typeof lease.processToken !== 'string' || !/^[a-f0-9-]{36}$/.test(lease.processToken))) throw new Error('Invalid lease process token');
-  if (lease.cleanupRequired !== undefined && (!lease.runDirectory || lease.cleanupRequired.runDirectory !== lease.runDirectory || !Number.isFinite(Date.parse(lease.cleanupRequired.recordedAt)) || lease.cleanupRequired.reason !== undefined && !['explicit', 'operation-exit', 'nested-exit'].includes(lease.cleanupRequired.reason))) throw new Error('Invalid cleanup-required lease metadata');
+  validateDeviceLease(lease, deviceId);
   if (lease.host !== hostname()) return { lease, owner: 'unknown' };
   try { process.kill(lease.pid, 0); return { lease, owner: 'alive' }; }
   catch (error) {
@@ -269,23 +273,40 @@ async function readDeviceAdmissionJournal(lease: Readonly<DeviceLease>, director
 /** Read-only proof that the exact transferred owner never admitted a new operation. */
 export async function inspectUnstartedDeviceTransfer(source: Readonly<DeviceLease>, token: string, directory = lockDirectory()) {
   const state = await inspectDeviceLock(source.deviceId, directory);
-  if (!state || state.owner !== 'dead' || state.lease.version !== 2 || state.lease.token !== token ||
-    state.lease.cleanupRequired || state.lease.preparationScope !== 'android-flow' ||
-    !source.runDirectory || state.lease.runDirectory !== source.runDirectory ||
-    state.lease.recoveredFrom?.token !== source.token || state.lease.recoveredFrom.runDirectory !== source.runDirectory ||
-    await realpath(source.runDirectory) !== source.runDirectory)
+  if (!state || state.owner !== 'dead' || state.lease.token !== token ||
+    !source.runDirectory || await realpath(source.runDirectory) !== source.runDirectory)
     throw new Error('Transferred lease is not an unstarted Android continuation');
-  const journal = await readDeviceAdmissionJournal(state.lease, directory);
-  if (journal.status !== 'resolved' || journal.entries !== 1) throw new Error('Transferred continuation already admitted work');
-  const binding = `${leasePath(source.deviceId, directory)}.binding-${token}.json`;
-  try { await readFile(binding); throw new Error('Transferred continuation has a run binding intent'); }
-  catch (error) { if (!codeIs(error, 'ENOENT')) throw error; }
+  let current = state.lease;
+  const seen = new Set<string>();
+  const transfers: { token: string; journalDigestSha256: string; predecessorDigestSha256?: string }[] = [];
+  while (true) {
+    validateDeviceLease(current, source.deviceId);
+    if (seen.has(current.token) || seen.size >= 1024 || current.version !== 2 || current.cleanupRequired ||
+      current.preparationScope !== 'android-flow' || current.runDirectory !== source.runDirectory ||
+      current.recoveredFrom?.runDirectory !== source.runDirectory)
+      throw new Error('Transferred lease is not an unstarted Android continuation');
+    seen.add(current.token);
+    const journal = await readDeviceAdmissionJournal(current, directory);
+    if (journal.status !== 'resolved' || journal.entries !== 1) throw new Error('Transferred continuation already admitted work');
+    const binding = `${leasePath(source.deviceId, directory)}.binding-${current.token}.json`;
+    try { await readFile(binding); throw new Error('Transferred continuation has a run binding intent'); }
+    catch (error) { if (!codeIs(error, 'ENOENT')) throw error; }
+    const proof: typeof transfers[number] = { token: current.token, journalDigestSha256: journal.digestSha256 };
+    transfers.push(proof);
+    if (current.recoveredFrom.token === source.token) break;
+    const raw = await readFile(`${leasePath(source.deviceId, directory)}.predecessor-${current.token}.json`);
+    const predecessor = JSON.parse(raw.toString('utf8')) as DeviceLease;
+    validateDeviceLease(predecessor, source.deviceId);
+    if (predecessor.token !== current.recoveredFrom.token) throw new Error('Unstarted transfer predecessor mismatch');
+    proof.predecessorDigestSha256 = createHash('sha256').update(raw).digest('hex');
+    current = predecessor;
+  }
   const copy = JSON.parse(await readFile(join(source.runDirectory, 'device-lease.json'), 'utf8'));
   const { cleanupRequired: _cleanup, ...identity } = source;
   if (!isDeepStrictEqual(copy, identity)) throw new Error('Unstarted transfer source lease evidence mismatch');
   const after = await inspectDeviceLock(source.deviceId, directory);
   if (!isDeepStrictEqual(after, state)) throw new Error('Unstarted transfer changed during inspection');
-  return { lease: state.lease, journalDigestSha256: journal.digestSha256 };
+  return { lease: state.lease, transfers };
 }
 
 /** Evidence only: even a uniquely bound unfinished Flow still needs verified cleanup. */
@@ -416,6 +437,9 @@ export async function continueRecoveredDevice<T>(deviceId: string, expectedToken
     // A visible transferred lease must already have a synced journal. Failure
     // before publication leaves the original owner and token intact.
     await initializeAdmissions(path, token, deviceId);
+    const predecessor = await open(`${path}.predecessor-${token}.json`, 'wx');
+    try { await predecessor.writeFile(JSON.stringify(lease)); await predecessor.sync(); }
+    finally { await predecessor.close(); }
     await requireDead();
     const temporary = `${path}.${token}.tmp`;
     const nextLease = await open(temporary, 'wx');
