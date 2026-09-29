@@ -28,6 +28,19 @@ export interface ReservedTaskReceipt {
   readonly id: string;
   readonly digestSha256: string;
 }
+
+async function readJsonAfterPublication(path: string): Promise<unknown> {
+  let last: unknown;
+  for (let attempt = 0; attempt < 40; attempt++) {
+    try { return JSON.parse(await readFile(path, 'utf8')); }
+    catch (error) {
+      last = error;
+      if (!(error instanceof SyntaxError)) throw error;
+      await delay(5);
+    }
+  }
+  throw last ?? new Error(`Unable to read published JSON: ${path}`);
+}
 export const terminalTask = (status: TaskStatus) => ['passed', 'failed', 'cancelled', 'interrupted'].includes(status);
 const uuidPattern = /^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/;
 const isCode = (error: unknown, code: string) => !!error && typeof error === 'object' && 'code' in error && error.code === code;
@@ -130,7 +143,7 @@ export class TaskStore {
         marker = expectedMarker;
       } catch (markerError) {
         if (!isCode(markerError, 'EEXIST')) throw markerError;
-        marker = JSON.parse(await readFile(markerPath, 'utf8'));
+        marker = await readJsonAfterPublication(markerPath);
       }
       }
     }
@@ -144,7 +157,7 @@ export class TaskStore {
     if (names.some(name => name !== 'reservation.json' && name !== 'task.json'))
       throw new Error('Reserved task directory contains ambiguous crash artifacts');
     try {
-      const existing = JSON.parse(await readFile(taskPath, 'utf8')) as TaskRecord;
+      const existing = await readJsonAfterPublication(taskPath) as TaskRecord;
       if (!sameReservedTask(existing, id, deviceId, parsedFlow, options))
         throw new Error('Reserved task identity or Flow differs from existing task');
       if (existing.owner.host !== hostname())
