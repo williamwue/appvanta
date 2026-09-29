@@ -2,9 +2,10 @@ import { readFile, writeFile } from 'node:fs/promises';
 import { dirname } from 'node:path';
 import { mkdir } from 'node:fs/promises';
 import { PNG } from 'pngjs';
+import { luminanceSsim } from './ssim.js';
 
 export interface VisualIgnoreRegion { readonly x: number; readonly y: number; readonly width: number; readonly height: number }
-export interface VisualDiffOptions { channelThreshold?: number; maxMismatchRatio?: number; ignoreRegions?: readonly VisualIgnoreRegion[]; maxAlignmentShift?: number }
+export interface VisualDiffOptions { channelThreshold?: number; maxMismatchRatio?: number; ignoreRegions?: readonly VisualIgnoreRegion[]; maxAlignmentShift?: number; minSsim?: number }
 
 export function parseVisualIgnoreRegions(value: unknown): VisualIgnoreRegion[] {
   if (!Array.isArray(value) || value.length > 100) throw new Error('ignoreRegions must contain at most 100 rectangles');
@@ -34,12 +35,14 @@ export interface VisualDiffResult {
   readonly diffPath?: string;
   readonly reason?: string;
   readonly alignment?: { readonly dx: number; readonly dy: number; readonly maxShift: number; readonly sampledPixels: number; readonly unmatchedPixels: number };
+  readonly ssim?: ReturnType<typeof luminanceSsim> & { readonly minimum: number };
 }
 
 export async function comparePngScreenshots(baselinePath: string, currentPath: string, diffPath: string, options: VisualDiffOptions = {}): Promise<VisualDiffResult> {
   const channelThreshold = options.channelThreshold ?? 16;
   const maxMismatchRatio = options.maxMismatchRatio ?? 0;
   const maxShift = options.maxAlignmentShift ?? 0;
+  if (options.minSsim !== undefined && (typeof options.minSsim !== 'number' || !Number.isFinite(options.minSsim) || options.minSsim < 0 || options.minSsim > 1)) throw new Error('minSsim must be from 0 to 1');
   if (!Number.isInteger(maxShift) || maxShift < 0 || maxShift > 16) throw new Error('maxAlignmentShift must be an integer from 0 to 16');
   if (!Number.isInteger(channelThreshold) || channelThreshold < 0 || channelThreshold > 255) throw new Error('channelThreshold must be an integer from 0 to 255');
   if (typeof maxMismatchRatio !== 'number' || !Number.isFinite(maxMismatchRatio) || maxMismatchRatio < 0 || maxMismatchRatio > 1) throw new Error('maxMismatchRatio must be from 0 to 1');
@@ -102,8 +105,9 @@ export async function comparePngScreenshots(baselinePath: string, currentPath: s
   }
   const comparedPixels = baseline.width * baseline.height - ignoredPixels;
   if (comparedPixels === 0) throw new Error('Ignore regions cover the entire image');
+  const ssim = options.minSsim === undefined ? undefined : { ...luminanceSsim(baseline, current, dx, dy, ignored), minimum: options.minSsim };
   await mkdir(dirname(diffPath), { recursive: true });
   await writeFile(diffPath, PNG.sync.write(diff));
   const mismatchRatio = differentPixels / comparedPixels;
-  return { version: 1, status: mismatchRatio <= maxMismatchRatio ? 'passed' : 'failed', width: baseline.width, height: baseline.height, comparedPixels, differentPixels, mismatchRatio, meanChannelDifference: totalDifference / (comparedPixels * 4), channelThreshold, maxMismatchRatio, ...(maxShift ? { alignment: { dx, dy, maxShift, sampledPixels, unmatchedPixels } } : {}), ...(ignoreRegions.length ? { ignoredPixels, ignoreRegions: ignoreRegions.map(region => ({ ...region })) } : {}), ...(differentPixels ? { bounds: { left, top, right, bottom } } : {}), diffPath };
+  return { version: 1, status: mismatchRatio <= maxMismatchRatio && (!ssim || ssim.score >= ssim.minimum) ? 'passed' : 'failed', width: baseline.width, height: baseline.height, comparedPixels, differentPixels, mismatchRatio, meanChannelDifference: totalDifference / (comparedPixels * 4), channelThreshold, maxMismatchRatio, ...(ssim ? { ssim } : {}), ...(maxShift ? { alignment: { dx, dy, maxShift, sampledPixels, unmatchedPixels } } : {}), ...(ignoreRegions.length ? { ignoredPixels, ignoreRegions: ignoreRegions.map(region => ({ ...region })) } : {}), ...(differentPixels ? { bounds: { left, top, right, bottom } } : {}), diffPath };
 }

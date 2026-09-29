@@ -38,6 +38,42 @@ test('visual diff produces pixel metrics, bounds, tolerance gate and diff PNG', 
   } finally { await rm(root, { recursive: true, force: true }); }
 });
 
+test('SSIM gate matches constant-image formula and cannot override the pixel gate', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'appvanta-ssim-'));
+  try {
+    const constant = async (name, value, size = 16) => {
+      const png = new PNG({ width: size, height: size });
+      for (let i = 0; i < png.data.length; i += 4) { png.data.fill(value, i, i + 3); png.data[i + 3] = 255; }
+      const path = join(root, name); await writeFile(path, PNG.sync.write(png)); return path;
+    };
+    const a = await constant('a.png', 100), b = await constant('b.png', 110), diff = join(root, 'diff.png');
+    const identical = await comparePngScreenshots(a, a, diff, { minSsim: 1 });
+    assert.equal(identical.ssim.score, 1); assert.equal(identical.ssim.windows, 36);
+    const expected = (2 * 100 * 110 + 6.5025) / (10000 + 12100 + 6.5025);
+    const result = await comparePngScreenshots(a, b, diff, { minSsim: 0.99, channelThreshold: 0, maxMismatchRatio: 1 });
+    assert(Math.abs(result.ssim.score - expected) < 1e-10);
+    assert.equal(result.status, 'passed');
+    const masked = await comparePngScreenshots(a, b, diff, { minSsim: 0.99, ignoreRegions: [{ x: 0, y: 0, width: 1, height: 1 }] });
+    assert.equal(masked.ssim.windows, 35); assert.equal(masked.ssim.excludedWindows, 1);
+    const ramp = new PNG({ width: 11, height: 11 }), reversed = new PNG({ width: 11, height: 11 });
+    for (let y = 0; y < 11; y++) for (let x = 0; x < 11; x++) {
+      const i = (y * 11 + x) * 4, value = Math.round(25.5 * x);
+      ramp.data.fill(value, i, i + 3); reversed.data.fill(255 - value, i, i + 3);
+      ramp.data[i + 3] = reversed.data[i + 3] = 255;
+    }
+    const rampPath = join(root, 'ramp.png'), reversedPath = join(root, 'reversed.png');
+    await writeFile(rampPath, PNG.sync.write(ramp)); await writeFile(reversedPath, PNG.sync.write(reversed));
+    const inverse = await comparePngScreenshots(rampPath, reversedPath, diff, { minSsim: 0, maxMismatchRatio: 1 });
+    assert(inverse.ssim.score < -0.9); assert.equal(inverse.status, 'failed');
+    assert.equal((await comparePngScreenshots(a, b, diff, { minSsim: 0.99, channelThreshold: 0 })).status, 'failed');
+    assert.equal((await comparePngScreenshots(a, b, diff, { minSsim: 0.999, maxMismatchRatio: 1 })).status, 'failed');
+    for (const minSsim of [-1, 1.1, NaN]) await assert.rejects(comparePngScreenshots(a, b, diff, { minSsim }), /minSsim/);
+    const small = await constant('small.png', 100, 10);
+    await assert.rejects(comparePngScreenshots(small, small, diff, { minSsim: 0 }), /11/);
+    await assert.rejects(comparePngScreenshots(a, a, diff, { minSsim: 0, ignoreRegions: [{ x: 5, y: 5, width: 6, height: 6 }] }), /SSIM.*window/);
+  } finally { await rm(root, { recursive: true, force: true }); }
+});
+
 test('opt-in translation alignment preserves border differences and detects content changes', async () => {
   const root = await mkdtemp(join(tmpdir(), 'appvanta-alignment-'));
   try {

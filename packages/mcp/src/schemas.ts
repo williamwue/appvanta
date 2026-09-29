@@ -59,6 +59,7 @@ export function toolSchema(name: string, original: Schema): Schema {
   if (name === 'compare_screenshots') {
     properties.ignoreRegions = { type: 'array', maxItems: 100, items: object({ x: integer(0, 100000), y: integer(0, 100000), width: integer(1, 100000), height: integer(1, 100000) }) };
     properties.maxAlignmentShift = integer(0, 16);
+    properties.minSsim = { type: 'number', minimum: 0, maximum: 1 };
   }
   if (properties.action) properties.action = ref('action');
   if (properties.instruction) properties.instruction = ref('step');
