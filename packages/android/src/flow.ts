@@ -13,6 +13,17 @@ import { startNetwork } from './network-session.js';
 import { startRuntimePermissions } from './permission-fixture.js';
 import { resetApplicationData } from './app-data-reset.js';
 import { recoverEmulatorShakes } from './emulator-sensors.js';
+import { parseAction } from '@appvanta/core';
+
+/** Execute one action with the same durable binding and cleanup as a Flow. */
+export async function runAndroidAction(serial: string, input: unknown, signal?: AbortSignal) {
+  const action = parseAction(input);
+  const startedAt = new Date().toISOString();
+  const result = await runAndroidFlow(serial, { name: `Android action: ${action.kind}`, steps: [{ description: `Execute ${action.kind}`, action }] }, signal);
+  return { success: result.status === 'passed', startedAt, finishedAt: new Date().toISOString(),
+    status: result.status, runDirectory: result.runDirectory, report: result.report, cleanupFailed: result.cleanupFailed,
+    ...(result.status !== 'passed' ? { message: result.steps.filter(step => step.status !== 'passed').map(step => step.message ?? step.description).join('; ') } : {}) };
+}
 
 /** onRunCreated may persist run/task metadata only. It must reject if that
  * persistence is incomplete; device or other external changes belong in a

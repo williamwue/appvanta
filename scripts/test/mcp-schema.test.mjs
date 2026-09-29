@@ -11,6 +11,7 @@ test('MCP publishes executable schemas and rejects invalid calls before acquirin
   const root = await mkdtemp(join(tmpdir(), 'appvanta-schema-'));
   try {
     const cases = [
+      ...[{ cycles: 1.5 }, { axis: 'w' }, { amplitude: 31 }, { intervalMs: 0 }].map(patch => ['execute_action', { deviceId: 'emulator-5554', action: { kind: 'shake', axis: 'x', amplitude: 12, cycles: 2, intervalMs: 150, ...patch } }]),
       ...['bad-token', '', 42, null].map(transferRetryToken => ['continue_adjudicated_task', {
         taskId: 'task-00000000-0000-0000-0000-000000000000', transferRetryToken,
         receipt: { decisionId: '00000000-0000-0000-0000-000000000000', preparationId: '00000000-0000-0000-0000-000000000000', leaseToken: '00000000-0000-0000-0000-000000000000', preparationDigestSha256: 'a'.repeat(64), previewDigestSha256: 'b'.repeat(64) },

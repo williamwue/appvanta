@@ -27,6 +27,7 @@ assert.equal(records.filter(name => name.endsWith('.restored.json')).length, 1);
 console.log('CLI shake passed');
 const mcpProcess = spawn(process.execPath, ['packages/mcp/dist/index.js'], { windowsHide: true, stdio: ['pipe', 'pipe', 'pipe'] });
 let mcp;
+const directActions = [];
 try {
   const responses = readMcpResponses(mcpProcess.stdout, [1, 2, 3], 120000);
   for (const message of [
@@ -43,6 +44,26 @@ try {
   mcp = JSON.parse(response.content[0].text);
   assert.equal(mcp.status, 'passed'); assert.equal(mcp.cleanupFailed, false);
   assert(close(await readEmulatorAcceleration('adb', device)));
+  for (const [offset, axis] of ['y', 'z'].entries()) {
+    const id = 4 + offset, requested = { ...action, axis };
+    const directResponses = readMcpResponses(mcpProcess.stdout, [id], 120000);
+    mcpProcess.stdin.write(JSON.stringify({ jsonrpc: '2.0', id, method: 'tools/call', params: { name: 'execute_action', arguments: { deviceId: device, action: requested } } }) + '\n');
+    const response = (await directResponses).find(message => message.id === id).result;
+    assert.notEqual(response.isError, true, JSON.stringify(response));
+    const result = JSON.parse(response.content[0].text);
+    assert.equal(result.success, true); assert.equal(result.status, 'passed'); assert.equal(result.cleanupFailed, false);
+    assert(Number.isFinite(Date.parse(result.startedAt)) && Number.isFinite(Date.parse(result.finishedAt)));
+    const saved = JSON.parse(await readFile(join(result.runDirectory, 'flow.json'), 'utf8'));
+    assert.deepEqual(saved.steps[0].action, requested);
+    const directory = join(result.runDirectory, 'fixtures/emulator-sensors');
+    const sources = (await readdir(directory)).filter(name => !name.endsWith('.restored.json'));
+    assert.equal(sources.length, 1);
+    const record = JSON.parse(await readFile(join(directory, sources[0]), 'utf8'));
+    assert.equal(record.options.axis, axis);
+    assert(close(await readEmulatorAcceleration('adb', device)));
+    assert.equal(await inspectDeviceLock(device), null);
+    directActions.push(result);
+  }
 } finally {
   if (mcpProcess.exitCode === null && mcpProcess.signalCode === null) { const exited = once(mcpProcess, 'exit'); mcpProcess.kill(); await exited; }
 }
@@ -96,5 +117,5 @@ try {
 } finally {
   if (owner.exitCode === null && owner.signalCode === null) { owner.kill('SIGKILL'); await exited; }
 }
-await writeFile(join(root, 'verification.json'), JSON.stringify({ status: 'passed', device, original, run, mcp, interruptedRun, during, conflictRefusal, recovery, limitations: ['Android Emulator only; physical devices and arbitrary app shake responses not covered.', 'Direct execute_action requires a managed Flow; business actions are not resumed by recovery.'] }, null, 2));
+await writeFile(join(root, 'verification.json'), JSON.stringify({ status: 'passed', device, original, run, mcp, directActions, interruptedRun, during, conflictRefusal, recovery, limitations: ['Android Emulator only; physical devices and arbitrary app shake responses not covered.', 'Business actions are not resumed by recovery.'] }, null, 2));
 console.log(JSON.stringify({ status: 'passed', root }));

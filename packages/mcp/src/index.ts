@@ -16,7 +16,7 @@ import { createInterface } from "node:readline";
 import { isAbsolute, resolve } from "node:path";
 import { readFile } from 'node:fs/promises';
 import { setTimeout as delay } from 'node:timers/promises';
-import { recoverAndroidFlow, analyzePerfetto, AdbDriver, runAndroidFlow, runAndroidFlows, parseUiTree, interactionCandidates, startManualRecording, stopManualRecording } from "@appvanta/android";
+import { recoverAndroidFlow, analyzePerfetto, AdbDriver, runAndroidAction, runAndroidFlow, runAndroidFlows, parseUiTree, interactionCandidates, startManualRecording, stopManualRecording } from "@appvanta/android";
 import { inspectDeviceLock, brand, parseAction, parseFlow, withDeviceLock, TaskStore, TaskInstructionStore, AuditLog, auditedStateChange, comparePngScreenshots, MonitorStore, BatchStore, validateWebhookUrl, validateWebhookSigningSecret } from "@appvanta/core";
 import type { FlowDefinition, TaskRecord, MonitorRecord, BatchRecord } from "@appvanta/core";
 
@@ -111,6 +111,9 @@ async function callTool(name: string | undefined, args: Record<string, unknown>,
     if (name === 'steer_task') instructionArgument(args);
     if (name === 'start_monitor' && typeof args.intervalMs === 'number' && typeof args.durationMs === 'number' && args.durationMs < args.intervalMs) throw new Error('durationMs must be at least intervalMs');
   } catch (error) { throw new ParameterError(String(error)); }
+  if (name === 'execute_action' && typeof args.deviceId === 'string' && parseAction(args.action).kind === 'shake') {
+    return runAndroidAction(args.deviceId, args.action, signal);
+  }
   if (typeof args.deviceId === 'string' && !['run_flow', 'start_flow', 'start_monitor', 'inspect_device_lock', 'recover_flow'].includes(name ?? '')) {
     return withDeviceLock(args.deviceId, () => callUnlockedTool(name, args, signal));
   }
