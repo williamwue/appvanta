@@ -28,5 +28,6 @@ export { prepareAdjudicatedTaskContinuation, readAdjudicatedTaskContinuation } f
 export type { AdjudicatedContinuationExpectation, AdjudicatedContinuationReadExpectation } from './adjudicated-continuation.js';
 export { reserveAdjudicatedSuccessor, reconcileAdjudicatedSuccessor, readAdjudicatedSuccessorReservation } from './successor-reservation.js';
 export type { SuccessorReservation, SuccessorReservationReceipt } from './successor-reservation.js';
+export { readAdjudicatedExecution } from './adjudicated-execution.js';
 
 export { verifyEvidence } from "./archive.mjs";

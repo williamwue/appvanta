@@ -3,7 +3,8 @@ import { readFile, readdir, realpath } from 'node:fs/promises';
 import { isAbsolute, join, relative, resolve } from 'node:path';
 import { isDeepStrictEqual } from 'node:util';
 import { parseFlow } from './flow-schema.js';
-import { prepareFlowContinuation, previewExecutingFlowProgress } from './flow-progress.js';
+import { prepareFlowContinuation, prepareAdjudicatedFlowContinuation, previewExecutingFlowProgress } from './flow-progress.js';
+import { readContinuationLineage } from './continuation-lineage.js';
 import type { TaskInstructionRecord } from './task-instructions.js';
 import { TaskStore } from './tasks.js';
 
@@ -55,9 +56,11 @@ async function captureInputs(store: TaskStore, sourceTaskId: string, successorTa
       }
     }
   }
-  await capture('source/claim.json', join(store.directory, sourceTaskId, 'continuation', 'claim.json'));
-  await capture('source/successor.json', join(store.directory, sourceTaskId, 'continuation', 'successor.json'));
-  await capture('successor/continuation.json', join(runDirectory, 'continuation.json'));
+  const lineage = await readContinuationLineage(store, successorTaskId);
+  if (lineage.sourceTaskId !== sourceTaskId) throw new Error('Continuation lineage source changed');
+  await capture('source/claim.json', lineage.claimPath);
+  await capture('source/successor.json', lineage.successorPath);
+  await capture('successor/continuation.json', lineage.markerPath);
   return files;
 }
 
@@ -89,19 +92,15 @@ async function evaluatePreview(store: TaskStore, successorTaskId: string) {
   if (await store.cancellationRequested(successorTaskId)) throw new Error('Successor cancellation is requested');
   if (!successor.runDirectory) throw new Error('Successor has no bound run directory');
   const runDirectory = await realpath(successor.runDirectory);
-  const continuation = await readJson(join(runDirectory, 'continuation.json'), 'successor continuation link');
-  const sourceTaskId = continuation.sourceTaskId;
+  const lineage = await readContinuationLineage(store, successorTaskId, successor);
+  const sourceTaskId = lineage.sourceTaskId;
   if (typeof sourceTaskId !== 'string' || sourceTaskId === successorTaskId) throw new Error('Invalid continuation source task identity');
   const source = await store.get(sourceTaskId);
   if (source.status !== 'interrupted') throw new Error(`Continuation source is ${source.status}, expected interrupted`);
   if (await store.cancellationRequested(sourceTaskId)) throw new Error('Continuation source cancellation is requested');
   if (!source.runDirectory) throw new Error('Continuation source has no bound run directory');
   const sourceRun = await realpath(source.runDirectory);
-  const claimPath = join(store.directory, sourceTaskId, 'continuation', 'claim.json');
-  const successorPath = join(store.directory, sourceTaskId, 'continuation', 'successor.json');
-  const claim = await readJson(claimPath, 'source continuation claim');
-  const link = await readJson(successorPath, 'source successor link');
-  if (!isDeepStrictEqual(continuation, claim) || !isDeepStrictEqual(link, { taskId: successorTaskId })) throw new Error('Successor claim/link mismatch');
+  const claim = lineage.claim;
   if (claim.version !== 1 || typeof claim.id !== 'string' || !claim.id
     || claim.sourceTaskId !== sourceTaskId || claim.deviceId !== source.deviceId || claim.deviceId !== successor.deviceId
     || claim.resumeAuthorized !== false || !claim.source || typeof claim.source !== 'object'
@@ -112,7 +111,7 @@ async function evaluatePreview(store: TaskStore, successorTaskId: string) {
   const claimedFlow = parseFlow(claim.flow);
   const checkpoint = claimedFlow.steps[0]?.action;
   if (checkpoint?.kind !== 'wait') throw new Error('Continuation claim has no checkpoint step');
-  const prepared = await prepareFlowContinuation(sourceRun, checkpoint.condition,
+  const prepared = await (lineage.kind === 'ordinary' ? prepareFlowContinuation : prepareAdjudicatedFlowContinuation)(sourceRun, checkpoint.condition,
     await readInstructions(store, sourceTaskId), checkpoint.timeoutMs);
   const sourceDevice = await readJson(join(sourceRun, 'device.json'), 'source device');
   const sourceProgress = await readJson(join(sourceRun, 'progress.json'), 'source progress');

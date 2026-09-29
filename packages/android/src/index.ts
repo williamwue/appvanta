@@ -16,6 +16,7 @@ export { recoverFileFixtures } from './file-fixtures.js';
 export { recoverAndroidFlow } from './recover-flow.js';
 export { continueAndroidTask } from './continue-task.js';
 export { continueAdjudicatedAndroidTask } from './continue-adjudicated-task.js';
+export { restartAdjudicatedAndroidTask } from './restart-adjudicated-task.js';
 export { validateAdjudicatedAndroidFlow } from './continue-adjudicated-task.js';
 export type { AdjudicatedAndroidContinuationOptions } from './continue-adjudicated-task.js';
 export { recoverCaptures } from './capture.js';

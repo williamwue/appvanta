@@ -6,6 +6,7 @@ import { inspectDeviceLock } from './device-lock.js';
 import { parseCondition, parseFlow } from './flow-schema.js';
 import { previewUncertainTaskStep } from './uncertain-step-preview.js';
 import { TaskStore } from './tasks.js';
+import { readContinuationLineage } from './continuation-lineage.js';
 
 const hex = (value: unknown): value is string => typeof value === 'string' && /^[a-f0-9]{64}$/.test(value);
 const uuid = (value: unknown): value is string => typeof value === 'string' && /^[a-f0-9-]{36}$/.test(value);
@@ -90,7 +91,7 @@ export async function recordUncertainStepAdjudication(store: TaskStore, successo
     || firstLease.lease.token !== decisionInput.expectedLeaseToken
     || !firstLease.lease.runDirectory || await realpath(firstLease.lease.runDirectory) !== before.runDirectory)
     throw new Error('Adjudication requires the exact dead-owner lease bound to the successor run');
-  const claim = JSON.parse(await readFile(join(store.directory, before.sourceTaskId, 'continuation', 'claim.json'), 'utf8'));
+  const { claim } = await readContinuationLineage(store, successorTaskId);
   if (!uuid(claim.id)) throw new Error('Invalid continuation claim ID');
   const record = {
     version: 1 as const, id: randomUUID(), createdAt: new Date().toISOString(),

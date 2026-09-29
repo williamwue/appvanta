@@ -6,13 +6,14 @@ import { continueAndroidFlow } from './recover-flow.js';
 import { runAndroidFlow } from './flow.js';
 import { archiveCancelledContinuation } from './retry-continuation.js';
 
-export async function continueAndroidTask(store: TaskStore, taskId: string, leaseToken: string, checkpoint: unknown, signal?: AbortSignal, onTaskCreated?: (taskId: string) => Promise<void>) {
+export async function continueAndroidTask(store: TaskStore, taskId: string, leaseToken: string, checkpoint: unknown, signal?: AbortSignal, onTaskCreated?: (taskId: string) => Promise<void>, validateSource?: () => Promise<void>) {
   const original = await store.get(taskId);
   if (!original.runDirectory) throw new Error('Task has no source run');
   const sourceRun = await realpath(original.runDirectory);
   let reservation: Awaited<ReturnType<typeof claimTaskContinuation>> | undefined;
   return continueAndroidFlow(original.deviceId, leaseToken, async recoveredRun => {
     if (!reservation || recoveredRun !== sourceRun) throw new Error('Continuation source changed');
+    await validateSource?.();
     signal?.throwIfAborted();
     const task = await store.create(original.deviceId, reservation.claim.flow);
     await writeFile(join(reservation.directory, 'successor.json'), JSON.stringify({ taskId: task.id }, null, 2), { flag: 'wx' });
@@ -82,6 +83,7 @@ export async function continueAndroidTask(store: TaskStore, taskId: string, leas
     }
   }, async lease => {
     signal?.throwIfAborted();
+    await validateSource?.();
     if (!lease.runDirectory || await realpath(lease.runDirectory) !== sourceRun) throw new Error('Task does not match abandoned device lease');
     await archiveCancelledContinuation(join(store.directory, taskId, 'continuation'), taskId, original.deviceId, leaseToken);
     reservation = await claimTaskContinuation(store, taskId, checkpoint);

@@ -1,10 +1,10 @@
 # AppVanta 当前状态与剩余任务
 
-更新：2026-09-29。本文件汇总当前有界验收；阶段清单中的逐次记录作为带日期的历史证据，旧段落中的“待完成”应结合本文件及后续验收读取。最终目标仍是覆盖固定版本 Argent / ARTEMIS 的全部公开可验证功能，不因本轮收尾缩小范围。以下 39 项清单保持完整，3 项已完成、36 项仍待办。
+更新：2026-09-30。本文件汇总当前有界验收；阶段清单中的逐次记录作为带日期的历史证据，旧段落中的“待完成”应结合本文件及后续验收读取。最终目标仍是覆盖固定版本 Argent / ARTEMIS 的全部公开可验证功能，不因本轮收尾缩小范围。以下 39 项清单保持完整，3 项已完成、36 项仍待办。
 
-Verification boundary correction (2026-09-29): integration 6697796 passed local tests (core 90, Android 52, scripts 33). Its running-task test retained the original lease instead of simulating the transferred lease left by a real worker crash. A regression now confirms that an old adjudication receipt is rejected against a dead transferred lease before device execution. Actual crash-after-running continuation therefore remains incomplete; missing task run/result/error fields alone do not prove safe recovery. Real-device/OEM acceptance remains unavailable; emulator evidence only. Package reinstall/uninstall and complete MCP response framing are implemented at ffb9d9c; same-version reinstall does not prove cross-version upgrade or schema migration.
+历史验收纠正：`6697796` 的 running-task 测试保留了原租约，并未模拟真实崩溃后的转移租约，不能据此证明恢复成功。后续转移重试增加了独立当前 token、初始化日志、无绑定意图及来源证据校验，并已补实际进程强杀验收。真机/OEM 仍不可用；同版本重装不证明跨版本升级或数据迁移。
 
-最新验收：`d46d165` 构建及 core 92、Android 58、脚本 36 项测试通过，四包安装/重装/卸载验证通过（doctor ready、49 个 MCP 工具）。API 37 / Android 17 上，真实后继 Worker 在只读等待中被强杀后，人工裁决 CLI 全链路通过，已完成 Home 未重复，剩余 Back 通过，最终租约释放。见 [裁决 CLI 与验收边界](adjudication-cli.md)。这不证明裁决后的新任务再次崩溃能恢复，也不覆盖任意不确定动作或全部环境夹具。API 35 的旧通用 nested 未决租约仍保留。此前公开提交 `0ca762d` 的 [托管 CI](https://github.com/williamwue/appvanta/actions/runs/36589798541) 四个任务均通过；下文初始发布失败记录属于历史状态。
+最新本地验收：`d186e1d` 四包构建及 core 95、Android 67、脚本 36 项测试通过；四包安装/重装/卸载验证通过（doctor ready、55 个 MCP 工具、已有项目记录保留）。API 37 / Android 17 已验证裁决后步骤边界再次崩溃、只读等待执行中再次裁决、文件恢复与外部修改冲突，以及租约转移后运行绑定前强杀并通过 CLI/MCP 显式重试。见 [裁决 CLI 与验收边界](adjudication-cli.md)。未覆盖任意写入动作、全部环境夹具或连续多次未绑定转移。API 35 的旧通用 nested 未决租约仍保留。此前公开提交 `5a6dcc2` 的 [托管 CI](https://github.com/williamwue/appvanta/actions/runs/36592655737) 四个任务均通过；该结果不代表后续本地提交，以下早期失败及数量均属于历史记录。
 
 ## 本轮已完成的范围
 
@@ -50,7 +50,7 @@ Verification boundary correction (2026-09-29): integration 6697796 passed local 
 
 - [ ] P0-01：定位 API 37 历史异常退出根因；API 35 r9 安装及 AVD boot 已通过，不据此勾选整项。
 - [ ] P0-02：实测片段之间的精确媒体时间间隙、设备拔插/超时失败路径；双 API 长时动态分段、严格解码及采样时钟边界已通过，传输失败/取消/空或缺失文件已保守失败并保留可用设备证据，但不据此勾选整项。
-- [ ] P0-03：补裁决后新任务再次崩溃的安全恢复、更多不确定动作和环境夹具验收、MCP 裁决入口。CLI 预览/裁决/准备/预约/执行已接通，执行中取消已有测试，API 37 只读等待中断后的真实裁决续跑通过；准备记录本身仍不授权执行，历史无准备标记或通用 nested 未决租约不能自动释放。
+- [ ] P0-03：补有写入副作用的不确定动作、更多环境夹具和连续多次未绑定转移的恢复验收。CLI/MCP 裁决入口、步骤边界再次崩溃、只读等待中的再次裁决，以及单次租约转移后运行绑定前的显式重试已有 API 37 证据；准备记录本身仍不授权执行，历史无准备标记或通用 nested 未决租约不能自动释放。详见 adjudication-cli.md。
 - [ ] P0-04：补网络/采集夹具恢复期间取消、超过重连期限、重复断线等故障组合；版本 2 租约日志已保守保留危险/不确定清理并拒绝迟到嵌套准入，但不据此勾选整项。
 - [ ] P0-05：整合本轮文档和功能提交后复核状态一致性；文档更新本身不使该项完成。
 

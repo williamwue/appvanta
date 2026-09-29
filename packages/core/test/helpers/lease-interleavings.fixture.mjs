@@ -3,6 +3,8 @@ import { mock } from 'node:test';
 import * as fs from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { execFile } from 'node:child_process';
+import { promisify } from 'node:util';
 
 const scenario = process.argv[2];
 let delayInspection = false;
@@ -12,6 +14,9 @@ let holdMkdir = false;
 let releaseMkdir;
 const mkdirGate = new Promise(resolve => { releaseMkdir = resolve; });
 let admissionFault;
+let initializationFault;
+let verifyTransferJournal = false;
+let journalBeforeTransfer = false;
 let appendCount = 0;
 let holdAdmission = false;
 let admissionEntered;
@@ -24,6 +29,15 @@ const inspectionGate = new Promise(resolve => { releaseInspection = resolve; });
 const entered = new Promise(resolve => { inspectionEntered = resolve; });
 mock.module('node:fs/promises', { namedExports: {
   ...fs,
+  rename: async (from, to) => {
+    if (verifyTransferJournal && String(from).endsWith('.tmp')) {
+      const next = JSON.parse(await fs.readFile(from, 'utf8'));
+      const journal = await fs.readFile(`${to}.admission-${next.token}.jsonl`, 'utf8');
+      assert.deepEqual(JSON.parse(journal), { version: 1, sequence: 0, token: next.token, deviceId: next.deviceId, kind: 'init' });
+      journalBeforeTransfer = true;
+    }
+    return fs.rename(from, to);
+  },
   mkdir: async (...args) => {
     if (holdMkdir) { holdMkdir = false; await mkdirGate; }
     return fs.mkdir(...args);
@@ -36,6 +50,14 @@ mock.module('node:fs/promises', { namedExports: {
     return fs.unlink(path);
   },
   open: async (...args) => {
+    if (initializationFault && String(args[0]).includes('.admission-') && args[1] === 'wx') {
+      const handle = await fs.open(...args);
+      return {
+        writeFile: (...values) => initializationFault === 'write' ? Promise.reject(new Error('journal initialization write failed')) : handle.writeFile(...values),
+        sync: () => Promise.reject(new Error('journal initialization sync failed')),
+        close: () => handle.close(),
+      };
+    }
     if (!String(args[0]).includes('.admission-') || args[1] !== 'a') return fs.open(...args);
     appendCount++;
     if (holdAdmission) {
@@ -71,7 +93,33 @@ mock.module('node:fs/promises', { namedExports: {
 const { withDeviceLock, bindDeviceLockRun, retainDeviceLockForCleanup, inspectDeviceLock, recoverDeviceLock } = await import('../../dist/device-lock.js');
 const root = await fs.mkdtemp(join(tmpdir(), `appvanta-${scenario}-`));
 try {
-  if (scenario === 'admitted-nested') {
+  if (['transfer-init-write-failure', 'transfer-init-sync-failure', 'transfer-journal-before-publication'].includes(scenario)) {
+    const module = new URL('../../dist/device-lock.js', import.meta.url).href;
+    await promisify(execFile)(process.execPath, ['--input-type=module', '-e',
+      `import { withDeviceLock } from ${JSON.stringify(module)}; await withDeviceLock('device', async () => process.exit(0), process.argv[1]);`, root], { windowsHide: true, timeout: 10000 });
+    const before = await inspectDeviceLock('device', root);
+    assert.equal(before.owner, 'dead');
+    const { continueRecoveredDevice, inspectDeviceAdmissionJournal } = await import('../../dist/device-lock.js');
+    let invoked = false;
+    if (scenario !== 'transfer-journal-before-publication') {
+      initializationFault = scenario === 'transfer-init-write-failure' ? 'write' : 'sync';
+      await assert.rejects(continueRecoveredDevice('device', before.lease.token, async () => {}, async () => { invoked = true; }, root), /journal initialization/);
+      assert.equal(invoked, false);
+      assert.deepEqual(await inspectDeviceLock('device', root), before);
+      assert.equal(await inspectDeviceAdmissionJournal(before.lease, root), 'resolved');
+      initializationFault = undefined;
+    }
+    verifyTransferJournal = true;
+    await continueRecoveredDevice('device', before.lease.token, async () => {}, async () => {
+      invoked = true;
+      const transferred = await inspectDeviceLock('device', root);
+      assert.notEqual(transferred.lease.token, before.lease.token);
+      assert.equal(transferred.lease.recoveredFrom.token, before.lease.token);
+      assert.equal(await inspectDeviceAdmissionJournal(transferred.lease, root), 'resolved');
+    }, root);
+    assert.equal(invoked, true); assert.equal(journalBeforeTransfer, true);
+    assert.equal(await inspectDeviceLock('device', root), null);
+  } else if (scenario === 'admitted-nested') {
     let releaseNested, nestedEntered;
     const nestedGate = new Promise(resolve => { releaseNested = resolve; });
     const nestedReady = new Promise(resolve => { nestedEntered = resolve; });

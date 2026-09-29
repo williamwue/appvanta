@@ -3,12 +3,13 @@ import { mkdir, open, readFile, realpath } from 'node:fs/promises';
 import { hostname } from 'node:os';
 import { join } from 'node:path';
 import { isDeepStrictEqual } from 'node:util';
-import { inspectDeviceLock, type DeviceLease } from './device-lock.js';
+import { inspectDeviceLock, inspectUnstartedDeviceTransfer, type DeviceLease } from './device-lock.js';
 import { prepareAdjudicatedFlowContinuation } from './flow-progress.js';
 import { parseFlow } from './flow-schema.js';
 import { TaskInstructionStore } from './task-instructions.js';
 import { TaskStore } from './tasks.js';
 import { readUncertainStepAdjudication } from './uncertain-step-adjudication.js';
+import { readContinuationLineage } from './continuation-lineage.js';
 import { previewUncertainTaskStep } from './uncertain-step-preview.js';
 
 const uuid = (value: unknown): value is string => typeof value === 'string' &&
@@ -49,7 +50,7 @@ const digest = (bytes: Buffer | string) => createHash('sha256').update(bytes).di
 
 async function inspect(store: TaskStore, successorTaskId: string,
   intent: ReturnType<typeof snapshotExpectation>, lockDirectory: string | undefined, timeoutMs: number,
-  readOnly = false) {
+  readOnly = false, transferRetryToken?: string) {
     const decision = await readUncertainStepAdjudication(store, successorTaskId);
     const decisionLease = decision.lease as { deviceId: string; token: string; runDirectory: string; snapshot: DeviceLease };
     if (decision.verdict !== 'postcondition-verified-skip' || decision.id !== intent.decisionId ||
@@ -69,12 +70,15 @@ async function inspect(store: TaskStore, successorTaskId: string,
       await store.cancellationRequested(source.id) || await store.cancellationRequested(successor.id) ||
       source.deviceId !== successor.deviceId || source.deviceId !== decisionLease.deviceId)
       throw new Error('Adjudication task state changed');
-    const lease = await inspectDeviceLock(successor.deviceId, lockDirectory);
+    const transferRetry = transferRetryToken === undefined ? undefined
+      : await inspectUnstartedDeviceTransfer(decisionLease.snapshot, transferRetryToken, lockDirectory);
+    const lease = transferRetry ? { lease: decisionLease.snapshot, owner: 'dead' as const }
+      : await inspectDeviceLock(successor.deviceId, lockDirectory);
     if (!lease || lease.owner !== 'dead' || !isDeepStrictEqual(lease.lease, decisionLease.snapshot) ||
       lease.lease.token !== intent.leaseToken || !lease.lease.runDirectory ||
       await realpath(lease.lease.runDirectory) !== preview.runDirectory)
       throw new Error('Adjudication requires the exact abandoned successor device lease');
-    const original: unknown = JSON.parse(await readFile(join(store.directory, source.id, 'continuation', 'claim.json'), 'utf8'));
+    const original: unknown = (await readContinuationLineage(store, successorTaskId)).claim;
     if (!original || typeof original !== 'object' || Array.isArray(original)) throw new Error('Invalid source continuation claim');
     const claim = original as Record<string, any>;
     if (!exactKeys(claim, ['version', 'id', 'sourceTaskId', 'deviceId', 'owner', 'createdAt', 'flow',
@@ -104,7 +108,7 @@ async function inspect(store: TaskStore, successorTaskId: string,
         (!origin || origin.continuationIndex !== step.flowIndex);
     }))
       throw new Error('Source continuation origin changed');
-    return { decision, preview, lease, prepared, predecessorOrigins,
+    return { decision, preview, lease, prepared, predecessorOrigins, transferRetry,
       originalSourceCompletedSteps: claim.source.completedSteps as number };
 }
 
@@ -161,7 +165,7 @@ function expectedClaim(inspected: Awaited<ReturnType<typeof inspect>>, id: strin
  * This reader does not grant permission to transfer a lease or execute the Flow.
  */
 export async function readAdjudicatedTaskContinuation(store: TaskStore, successorTaskId: string,
-  expected: AdjudicatedContinuationReadExpectation, lockDirectory?: string) {
+  expected: AdjudicatedContinuationReadExpectation, lockDirectory?: string, transferRetryToken?: string) {
   // Snapshot all caller input before the first await so mutations cannot change the read's intent.
   const intent = snapshotExpectation(expected);
   const preparationId = expected.preparationId;
@@ -170,7 +174,7 @@ export async function readAdjudicatedTaskContinuation(store: TaskStore, successo
   if (!uuid(preparationId) || !hex(preparationDigestSha256))
     throw new Error('Invalid adjudicated continuation preparation receipt');
 
-  const before = await inspect(store, successorTaskId, intent, lockDirectory, timeoutMs, true);
+  const before = await inspect(store, successorTaskId, intent, lockDirectory, timeoutMs, true, transferRetryToken);
   const directory = join(store.directory, successorTaskId, 'adjudicated-continuation');
   const path = join(directory, 'preparation.json');
   const raw = await readFile(path);
@@ -197,8 +201,8 @@ export async function readAdjudicatedTaskContinuation(store: TaskStore, successo
     owner as { pid: number; host: string }, successorTaskId);
   if (!isDeepStrictEqual(claim, reconstructed))
     throw new Error('Adjudicated continuation preparation differs from current inputs');
-  const after = await inspect(store, successorTaskId, intent, lockDirectory, timeoutMs, true);
+  const after = await inspect(store, successorTaskId, intent, lockDirectory, timeoutMs, true, transferRetryToken);
   if (!isDeepStrictEqual(before, after) || !(await readFile(path)).equals(raw))
     throw new Error('Adjudicated continuation changed during read');
-  return { directory, claim: claim as typeof reconstructed };
+  return { directory, claim: claim as typeof reconstructed, transferRetry: before.transferRetry };
 }

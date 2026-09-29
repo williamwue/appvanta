@@ -44,7 +44,7 @@ test('Android Flow admission is distinct and unresolved work still retains owner
   } finally { await rm(root, { recursive: true, force: true }); }
 });
 
-for (const scenario of ['admitted-nested', 'closing-admission', 'delayed-inspection', 'delayed-inspection-no-replacement', 'marker-write-failure', 'pending-write-denied', 'resolution-write-denied', 'resolution-sync-denied', 'delayed-admission-finalization', 'recovery-unlink-retry', 'normal-unlink-retry']) {
+for (const scenario of ['transfer-init-write-failure', 'transfer-init-sync-failure', 'transfer-journal-before-publication', 'admitted-nested', 'closing-admission', 'delayed-inspection', 'delayed-inspection-no-replacement', 'marker-write-failure', 'pending-write-denied', 'resolution-write-denied', 'resolution-sync-denied', 'delayed-admission-finalization', 'recovery-unlink-retry', 'normal-unlink-retry']) {
   test(`lease interleaving: ${scenario}`, async () => {
     const { stdout } = await promisify(execFile)(process.execPath, ['--experimental-test-module-mocks', fileURLToPath(new URL('./helpers/lease-interleavings.fixture.mjs', import.meta.url)), scenario], { timeout: 15000, windowsHide: true });
     assert.match(stdout, new RegExp(`${scenario}: passed`));

@@ -6,7 +6,7 @@ import { mkdtemp, mkdir, readFile, realpath, rm, writeFile } from 'node:fs/promi
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { parseFlow, TaskStore, prepareAdjudicatedTaskContinuation, recordUncertainStepAdjudication,
-  previewUncertainTaskStep, reserveAdjudicatedSuccessor } from '@appvanta/core';
+  previewUncertainTaskStep, reserveAdjudicatedSuccessor, readAdjudicatedExecution } from '@appvanta/core';
 import { continueAdjudicatedAndroidTask, validateAdjudicatedAndroidFlow } from '../dist/index.js';
 
 const sha = value => createHash('sha256').update(JSON.stringify(value)).digest('hex');
@@ -71,6 +71,7 @@ test('adjudicated continuation fake executes only after exact dead lease transfe
       runFlow: async (_device, flow, _signal, onRunCreated) => {
         runCalled = true; assert.equal(flow.steps[0].action.kind, 'wait');
         const run = join(f.root, 'new-run'); await mkdir(run); await onRunCreated?.(run);
+        await save(join(run, 'flow.json'), flow);
         return { status: 'passed', runDirectory: run, report: join(run, 'report.md'), steps: [] };
       },
     });
@@ -79,6 +80,21 @@ test('adjudicated continuation fake executes only after exact dead lease transfe
     const marker = JSON.parse(await readFile(join(f.root, 'new-run', 'adjudicated-continuation.json'), 'utf8'));
     assert.equal(marker.predecessorTaskId, f.successor.id);
     assert.equal(marker.resumeAuthorized, false);
+    assert.deepEqual(marker.preparationReceipt, f.receipt);
+    const verified = await readAdjudicatedExecution(f.store, f.successor.id, result.taskId, f.receipt);
+    assert.equal(verified.resumeAuthorized, false);
+    assert.equal(verified.runDirectory, await realpath(join(f.root, 'new-run')));
+    await assert.rejects(readAdjudicatedExecution(f.store, f.successor.id, result.taskId,
+      { ...f.receipt, preparationDigestSha256: '0'.repeat(64) }), /receipt|digest/i);
+    const markerPath = join(f.root, 'new-run', 'adjudicated-continuation.json');
+    for (const changed of [{ ...marker, successorTaskId: f.successor.id },
+      { ...marker, reservationDigestSha256: '0'.repeat(64) }, { ...marker, resumeAuthorized: true }]) {
+      await save(markerPath, changed);
+      await assert.rejects(readAdjudicatedExecution(f.store, f.successor.id, result.taskId, f.receipt), /lineage mismatch/);
+    }
+    await save(markerPath, marker);
+    await save(join(f.root, 'new-run', 'flow.json'), { ...f.reservation.task.flow, name: 'changed' });
+    await assert.rejects(readAdjudicatedExecution(f.store, f.successor.id, result.taskId, f.receipt), /Flow mismatch/);
   } finally { await rm(f.root, { recursive: true, force: true }); }
 });
 
@@ -139,6 +155,74 @@ test('cancelled reserved successor is rejected before entering Android recovery'
   } finally { await rm(f.root, { recursive: true, force: true }); }
 });
 
+async function unstartedTransfer(f) {
+  await save(join(f.successorRun, 'device-lease.json'), f.oldLease);
+  const lease = { ...f.oldLease, version: 2, token: randomUUID(), preparationScope: 'android-flow',
+    recoveredFrom: { token: f.oldLease.token, runDirectory: f.successorRun } };
+  await save(f.lockPath, lease);
+  const journal = `${f.lockPath}.admission-${lease.token}.jsonl`;
+  const init = { version: 1, sequence: 0, token: lease.token, deviceId: lease.deviceId, kind: 'init' };
+  await writeFile(journal, JSON.stringify(init) + '\n');
+  const taskPath = join(f.store.directory, f.reservation.task.id, 'task.json');
+  const task = JSON.parse(await readFile(taskPath, 'utf8'));
+  await save(taskPath, { ...task, status: 'running', owner: { ...task.owner, pid: 2147483647 } });
+  return { lease, journal, init };
+}
+
+test('explicit unstarted transfer retry keeps the reserved task and original execution receipt', async () => {
+  const f = await executionFixture();
+  try {
+    const { lease } = await unstartedTransfer(f);
+    const result = await continueAdjudicatedAndroidTask(f.store, f.successor.id, f.receipt, {
+      lockDirectory: join(f.root, 'locks'), transferRetryToken: lease.token,
+      continueFlow: async (_device, token, operation, beforeRecovery) => {
+        assert.equal(token, lease.token);
+        await beforeRecovery();
+        await save(f.lockPath, { ...lease, token: randomUUID(), pid: process.pid,
+          recoveredFrom: { token: lease.token, runDirectory: f.successorRun } });
+        return operation(f.successorRun);
+      },
+      runFlow: async (_device, flow, _signal, created) => {
+        const run = join(f.root, 'retry-run'); await mkdir(run); await created(run);
+        await save(join(run, 'flow.json'), flow);
+        return { status: 'passed', runDirectory: run, report: join(run, 'report.md'), steps: [] };
+      },
+    });
+    assert.equal(result.taskId, f.reservation.task.id);
+    assert.equal(result.status, 'passed');
+    const verified = await readAdjudicatedExecution(f.store, f.successor.id, result.taskId, f.receipt);
+    assert.equal(verified.resumeAuthorized, false);
+  } finally { await rm(f.root, { recursive: true, force: true }); }
+});
+
+for (const fault of ['live-owner', 'wrong-token', 'cleanup', 'binding', 'source-copy', 'pending', 'resolved-work']) {
+  test(`unstarted transfer retry rejects ${fault} before device recovery`, async () => {
+    const f = await executionFixture();
+    try {
+      const { lease, journal, init } = await unstartedTransfer(f);
+      if (fault === 'live-owner') await save(f.lockPath, { ...lease, pid: process.pid });
+      if (fault === 'cleanup') await save(f.lockPath, { ...lease, cleanupRequired: {
+        runDirectory: lease.runDirectory, recordedAt: new Date().toISOString(), reason: 'explicit' } });
+      if (fault === 'binding') await writeFile(`${f.lockPath}.binding-${lease.token}.json`, '');
+      if (fault === 'source-copy') await save(join(f.successorRun, 'device-lease.json'), { ...f.oldLease, token: randomUUID() });
+      if (fault === 'pending' || fault === 'resolved-work') {
+        const pending = { ...init, sequence: 1, kind: 'pending', id: randomUUID(), operation: 'android-flow' };
+        const records = [init, pending];
+        if (fault === 'resolved-work') records.push({ ...pending, sequence: 2, kind: 'resolved' });
+        await writeFile(journal, records.map(JSON.stringify).join('\n') + '\n');
+      }
+      const before = await readFile(f.lockPath, 'utf8');
+      let touched = false;
+      await assert.rejects(continueAdjudicatedAndroidTask(f.store, f.successor.id, f.receipt, {
+        lockDirectory: join(f.root, 'locks'), transferRetryToken: fault === 'wrong-token' ? randomUUID() : lease.token,
+        continueFlow: async () => { touched = true; throw new Error('Unexpected device recovery'); },
+      }), /unstarted|admitted work|binding intent|source lease evidence/i);
+      assert.equal(touched, false);
+      assert.equal(await readFile(f.lockPath, 'utf8'), before);
+    } finally { await rm(f.root, { recursive: true, force: true }); }
+  });
+}
+
 for (const mode of ['poll', 'step', 'caller', 'read-error']) {
   test(`adjudicated execution stops on ${mode} and persists its outcome`, async () => {
     const f = await executionFixture();
@@ -176,3 +260,69 @@ for (const mode of ['poll', 'step', 'caller', 'read-error']) {
     } finally { await rm(f.root, { recursive: true, force: true }); }
   });
 }
+
+test('a simulated second executing crash can be previewed and adjudicated with its new lease', async () => {
+  const f = await executionFixture();
+  try {
+    let runRoot;
+    await assert.rejects(continueAdjudicatedAndroidTask(f.store, f.successor.id, f.receipt, {
+      lockDirectory: join(f.root, 'locks'),
+      continueFlow: async (_device, _token, operation, beforeRecovery) => {
+        await beforeRecovery();
+        await save(f.lockPath, { ...f.oldLease, token: randomUUID(), pid: process.pid,
+          recoveredFrom: { token: f.oldLease.token, runDirectory: f.successorRun } });
+        return operation(f.successorRun);
+      },
+      runFlow: async (_device, flow, _signal, created) => {
+        runRoot = join(f.root, 'second-crash'); await mkdir(runRoot); await created(runRoot);
+        await save(join(runRoot, 'flow.json'), flow);
+        await save(join(runRoot, 'device.json'), { id: 'device-1' });
+        await save(join(runRoot, 'progress.json'), { version: 1, revision: 1, deviceId: 'device-1',
+          flowSha256: sha(flow), phase: 'executing', completed: [], active: { flowIndex: 0, step: flow.steps[0] },
+          pending: flow.steps.slice(1).map((step, index) => ({ flowIndex: index + 1, step })) });
+        throw new Error('simulated process crash');
+      },
+    }), /simulated process crash/);
+    const id = f.reservation.task.id;
+    const taskPath = join(f.store.directory, id, 'task.json');
+    const raw = JSON.parse(await readFile(taskPath, 'utf8'));
+    delete raw.finishedAt; delete raw.error;
+    await save(taskPath, { ...raw, status: 'running', owner: { ...raw.owner, pid: 2147483647 } });
+    const lease = JSON.parse(await readFile(f.lockPath, 'utf8'));
+    await save(f.lockPath, { ...lease, pid: 2147483647, runDirectory: await realpath(runRoot) });
+    const preview = await previewUncertainTaskStep(f.store, id);
+    assert.equal(preview.sourceTaskId, f.successor.id);
+    assert.equal(preview.resumeAuthorized, false);
+    const decision = await recordUncertainStepAdjudication(f.store, id, {
+      expectedPreviewDigestSha256: preview.previewDigestSha256, expectedLeaseToken: lease.token,
+      operator: 'test', reason: 'fresh observation after second crash', verdict: 'postcondition-verified-skip',
+      postconditionCheckpoint: { kind: 'text-visible', text: 'Done again' },
+    }, join(f.root, 'locks'));
+    const expected = { decisionId: decision.id, previewDigestSha256: preview.previewDigestSha256, leaseToken: lease.token };
+    const prepared = await prepareAdjudicatedTaskContinuation(f.store, id, expected, join(f.root, 'locks'));
+    const secondReceipt = { ...expected, preparationId: prepared.claim.id, preparationDigestSha256: prepared.preparationDigestSha256 };
+    const reserved = await reserveAdjudicatedSuccessor(f.store, id, secondReceipt, join(f.root, 'locks'));
+    assert.notEqual(reserved.task.id, id);
+    assert.equal(reserved.task.flow.steps[0].action.condition.text, 'Done again');
+    assert.equal(reserved.task.flow.steps.length, 2);
+    assert.equal(prepared.claim.resumeAuthorized, false);
+    const second = await continueAdjudicatedAndroidTask(f.store, id, secondReceipt, {
+      lockDirectory: join(f.root, 'locks'),
+      continueFlow: async (_device, token, operation, beforeRecovery) => {
+        await beforeRecovery();
+        await save(f.lockPath, { ...lease, token: randomUUID(), pid: process.pid, runDirectory: await realpath(runRoot),
+          recoveredFrom: { token, runDirectory: await realpath(runRoot) } });
+        return operation(await realpath(runRoot));
+      },
+      runFlow: async (_device, flow, _signal, created) => {
+        const nextRun = join(f.root, 'second-adjudication'); await mkdir(nextRun); await created(nextRun);
+        await save(join(nextRun, 'flow.json'), flow);
+        return { status: 'passed', runDirectory: nextRun, report: join(nextRun, 'report.md'), steps: [] };
+      },
+    });
+    assert.equal(second.status, 'passed');
+    assert.equal((await readAdjudicatedExecution(f.store, id, second.taskId, secondReceipt)).resumeAuthorized, false);
+    await save(join(runRoot, 'continuation.json'), {});
+    await assert.rejects(previewUncertainTaskStep(f.store, id), /ambiguous/);
+  } finally { await rm(f.root, { recursive: true, force: true }); }
+});

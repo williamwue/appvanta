@@ -11,6 +11,22 @@ test('MCP publishes executable schemas and rejects invalid calls before acquirin
   const root = await mkdtemp(join(tmpdir(), 'appvanta-schema-'));
   try {
     const cases = [
+      ...['bad-token', '', 42, null].map(transferRetryToken => ['continue_adjudicated_task', {
+        taskId: 'task-00000000-0000-0000-0000-000000000000', transferRetryToken,
+        receipt: { decisionId: '00000000-0000-0000-0000-000000000000', preparationId: '00000000-0000-0000-0000-000000000000', leaseToken: '00000000-0000-0000-0000-000000000000', preparationDigestSha256: 'a'.repeat(64), previewDigestSha256: 'b'.repeat(64) },
+      }]),
+      ['restart_adjudicated_task', { predecessorTaskId: '../escape' }],
+      ...['ui-changed', 'screen-stable'].map(kind => ['restart_adjudicated_task', {
+        predecessorTaskId: 'task-00000000-0000-0000-0000-000000000000', successorTaskId: 'task-11111111-1111-1111-1111-111111111111',
+        receipt: { decisionId: '00000000-0000-0000-0000-000000000000', preparationId: '00000000-0000-0000-0000-000000000000', leaseToken: '00000000-0000-0000-0000-000000000000', preparationDigestSha256: 'a'.repeat(64), previewDigestSha256: 'b'.repeat(64) },
+        leaseToken: '11111111-1111-1111-1111-111111111111', checkpoint: { kind, ...(kind === 'screen-stable' ? { stableMs: 500 } : {}) },
+      }]),
+      ['adjudicate_task', { taskId: 'task-00000000-0000-0000-0000-000000000000', decision: { expectedPreviewDigestSha256: 'a'.repeat(64), expectedLeaseToken: '00000000-0000-0000-0000-000000000000', operator: 'test', reason: 'unknown', verdict: 'unresolved', postconditionCheckpoint: { kind: 'text-visible', text: 'Ready' } } }],
+      ['preview_uncertain_task', { taskId: '../escape' }],
+      ['adjudicate_task', { taskId: 'task-00000000-0000-0000-0000-000000000000', decision: { expectedPreviewDigestSha256: 'a'.repeat(64), expectedLeaseToken: '00000000-0000-0000-0000-000000000000', operator: 'test', reason: 'observed', verdict: 'postcondition-verified-skip' } }],
+      ...['ui-changed', 'screen-stable'].map(kind => ['adjudicate_task', { taskId: 'task-00000000-0000-0000-0000-000000000000', decision: { expectedPreviewDigestSha256: 'a'.repeat(64), expectedLeaseToken: '00000000-0000-0000-0000-000000000000', operator: 'test', reason: 'observed', verdict: 'postcondition-verified-skip', postconditionCheckpoint: { kind, ...(kind === 'screen-stable' ? { stableMs: 500 } : {}) } } }]),
+      ['prepare_adjudicated_task', { taskId: 'task-00000000-0000-0000-0000-000000000000', expectation: {} }],
+      ...['reserve_adjudicated_task', 'continue_adjudicated_task'].map(name => [name, { taskId: 'task-00000000-0000-0000-0000-000000000000', receipt: {} }]),
       ['execute_action', { deviceId: 'fake', action: { kind: 'share-text', text: 'hello', packageName: 'app.test;bad' } }],
       ['execute_action', { deviceId: 'fake', action: { kind: 'share-text', text: '' } }],
       ['start_avd', { name: 'Test', port: 5555 }],

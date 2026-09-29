@@ -5,6 +5,7 @@ import { fileURLToPath } from 'node:url';
 import { ParameterError, protocolSession } from './protocol.js';
 import { Ajv } from 'ajv';
 import { toolSchema } from './schemas.js';
+import { adjudicationTools, callAdjudicationTool } from './adjudication-tools.js';
 import { recordedFlow } from '@appvanta/core';
 import { inspectTaskProgress } from '@appvanta/core';
 import { continueAndroidTask } from '@appvanta/android';
@@ -30,6 +31,7 @@ const batchStore = new BatchStore(resolve('.appvanta/batches'));
 const webhookOrigins = (process.env.APPVANTA_WEBHOOK_ALLOW_ORIGINS ?? '').split(',').map(value => value.trim()).filter(Boolean);
 const webhookSigningSecret = process.env.APPVANTA_WEBHOOK_SIGNING_SECRET ? validateWebhookSigningSecret(process.env.APPVANTA_WEBHOOK_SIGNING_SECRET) : undefined;
 const rawTools = [
+  ...adjudicationTools,
   { name: 'start_avd', description: 'Start a configured AVD headlessly or reuse its running instance. Waits for Android boot completion, saves logs, and leaves the process running on timeout. Does not wipe data.', inputSchema: { type: 'object', properties: { name: { type: 'string', pattern: '^[A-Za-z0-9_.-]+$' }, port: { type: 'integer', minimum: 5554, maximum: 5682, multipleOf: 2 }, timeoutMs: { type: 'integer', minimum: 1000, maximum: 600000 }, gpu: { type: 'string', enum: ['auto', 'host', 'software', 'lavapipe', 'swiftshader', 'swangle'] } }, required: ['name'] } },
   { name: 'list_avds', description: 'List locally configured Android Virtual Devices using the installed emulator binary. This inventory does not imply devices are booted or ready.', inputSchema: { type: 'object', properties: {} } },
   { name: 'inspect_task_progress', description: 'Inspect interrupted task progress and evidence without executing remaining actions. A consistent boundary alone does not authorize continuation.', inputSchema: { type: 'object', properties: { taskId: { type: 'string', pattern: '^task-[a-f0-9-]{36}$' } }, required: ['taskId'] } },
@@ -119,6 +121,12 @@ async function callUnlockedTool(name: string | undefined, args: Record<string, u
   const driver = new AdbDriver({ artifactsDirectory: resolve(".appvanta", "mcp-artifacts", randomUUID()), signal });
   const deviceId = typeof args.deviceId === "string" ? brand<string, "DeviceId">(args.deviceId) : undefined;
   switch (name) {
+    case 'preview_uncertain_task':
+    case 'adjudicate_task':
+    case 'prepare_adjudicated_task':
+    case 'reserve_adjudicated_task':
+    case 'restart_adjudicated_task':
+    case 'continue_adjudicated_task': return callAdjudicationTool(name, taskStore, args, signal);
     case 'list_avds': return listAndroidAvds();
     case 'start_avd': return startAndroidAvd(String(args.name), typeof args.port === 'number' ? args.port : 5554, typeof args.timeoutMs === 'number' ? args.timeoutMs : 120000, args.gpu as string | undefined);
     case 'inspect_task_progress': return inspectTaskProgress(taskStore, String(args.taskId));

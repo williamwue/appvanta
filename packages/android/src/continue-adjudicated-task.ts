@@ -1,4 +1,4 @@
-import { realpath, writeFile } from 'node:fs/promises';
+import { realpath, open } from 'node:fs/promises';
 import { createHash } from 'node:crypto';
 import { join } from 'node:path';
 import { isDeepStrictEqual } from 'node:util';
@@ -19,6 +19,7 @@ type RunFlow = typeof runAndroidFlow;
 export interface AdjudicatedAndroidContinuationOptions {
   readonly lockDirectory?: string;
   readonly signal?: AbortSignal;
+  readonly transferRetryToken?: string;
   /** Deterministic seams for the offline/fake tests; production uses Android recovery. */
   readonly continueFlow?: ContinueFlow;
   readonly runFlow?: RunFlow;
@@ -38,12 +39,16 @@ export const validateAdjudicatedAndroidFlow = (flow: any) => {
  */
 export async function continueAdjudicatedAndroidTask(store: TaskStore, predecessorTaskId: string,
   receipt: SuccessorReservationReceipt, options: AdjudicatedAndroidContinuationOptions = {}) {
+  receipt = { ...receipt };
   const continueFlow = options.continueFlow ?? continueAndroidFlow;
   const runFlow = options.runFlow ?? runAndroidFlow;
-  const prepared = await readAdjudicatedTaskContinuation(store, predecessorTaskId, receipt, options.lockDirectory);
+  const retryToken = options.transferRetryToken;
+  const prepared = await readAdjudicatedTaskContinuation(store, predecessorTaskId, receipt, options.lockDirectory, retryToken);
   const reserved = await readAdjudicatedSuccessorReservation(store, predecessorTaskId, receipt);
   const claim = prepared.claim;
   const reservation = reserved.reservation;
+  const expectedLease = prepared.transferRetry?.lease ?? claim.abandonedLease.snapshot;
+  const expectedToken = expectedLease.token;
   if (await store.cancellationRequested(reservation.successorTaskId))
     throw new Error('Adjudicated successor cancellation requested');
   if (reservation.sourceTaskId !== claim.sourceTaskId || reservation.deviceId !== claim.abandonedLease.deviceId ||
@@ -65,20 +70,20 @@ export async function continueAdjudicatedAndroidTask(store: TaskStore, predecess
   const revalidateDeadLease = async () => {
     if (await store.cancellationRequested(reservation.successorTaskId))
       throw new Error('Adjudicated successor cancellation requested');
-    const latest = await readAdjudicatedTaskContinuation(store, predecessorTaskId, receipt, options.lockDirectory);
+    const latest = await readAdjudicatedTaskContinuation(store, predecessorTaskId, receipt, options.lockDirectory, retryToken);
     const latestReservation = await readAdjudicatedSuccessorReservation(store, predecessorTaskId, receipt);
-    if (!isDeepStrictEqual(latest.claim, claim) || !isDeepStrictEqual(latestReservation.reservation, reservation))
+    if (!isDeepStrictEqual(latest.claim, claim) || !isDeepStrictEqual(latest.transferRetry, prepared.transferRetry) || !isDeepStrictEqual(latestReservation.reservation, reservation))
       throw new Error('Adjudicated preparation changed before lease transfer');
     const state = await inspectDeviceLock(claim.abandonedLease.deviceId, options.lockDirectory);
-    if (!state || state.owner !== 'dead' || !isDeepStrictEqual(state.lease, claim.abandonedLease.snapshot) ||
-      state.lease.token !== claim.abandonedLease.token || state.lease.deviceId !== claim.abandonedLease.deviceId ||
+    if (!state || state.owner !== 'dead' || !isDeepStrictEqual(state.lease, expectedLease) ||
+      state.lease.token !== expectedToken || state.lease.deviceId !== claim.abandonedLease.deviceId ||
       !state.lease.runDirectory || await realpath(state.lease.runDirectory) !== await realpath(claim.abandonedLease.runDirectory))
       throw new Error('Adjudicated continuation requires the exact dead lease');
   };
 
-  return continueFlow(claim.abandonedLease.deviceId, claim.abandonedLease.token, async sourceRun => {
+  return continueFlow(claim.abandonedLease.deviceId, expectedToken, async sourceRun => {
     const state = await inspectDeviceLock(claim.abandonedLease.deviceId, options.lockDirectory);
-    if (!state || state.owner !== 'alive' || state.lease.recoveredFrom?.token !== claim.abandonedLease.token ||
+    if (!state || state.owner !== 'alive' || state.lease.recoveredFrom?.token !== expectedToken ||
       !state.lease.runDirectory || await realpath(state.lease.runDirectory) !== await realpath(sourceRun))
       throw new Error('Transferred lease does not retain adjudicated source lineage');
     task = task.status === 'running'
@@ -110,11 +115,14 @@ export async function continueAdjudicatedAndroidTask(store: TaskStore, predecess
           version: 1, kind: 'adjudicated-android-continuation',
           predecessorTaskId, sourceTaskId: claim.sourceTaskId, successorTaskId: task.id,
           reservationId: reservation.id, preparationId: claim.id, decisionId: claim.decisionId,
+          preparationReceipt: receipt, reservationDigestSha256: markerDigest,
           leaseToken: claim.abandonedLease.token, sourceRun: await realpath(sourceRun),
           runDirectory: await realpath(root), guardedCheckpoint: claim.flow.steps[0]?.action,
           omittedResets: claim.omittedResets, resumeAuthorized: false,
         } as const;
-        await writeFile(join(root, 'adjudicated-continuation.json'), JSON.stringify(lineage, null, 2), { flag: 'wx' });
+        const marker = await open(join(root, 'adjudicated-continuation.json'), 'wx');
+        try { await marker.writeFile(JSON.stringify(lineage, null, 2)); await marker.sync(); }
+        finally { await marker.close(); }
         task.runDirectory = root;
         await store.save(task);
       }, { drain: async () => [], finish: async () => {}, beforeStep: checkCancellation });

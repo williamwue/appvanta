@@ -234,7 +234,7 @@ export async function inspectDeviceAdmissionJournal(lease: Readonly<DeviceLease>
 }
 
 async function readDeviceAdmissionJournal(lease: Readonly<DeviceLease>, directory: string) {
-  if (lease.version === 1) return { status: 'legacy' as const, pending: new Map<string, string>(), intents: [] as string[], digestSha256: '' };
+  if (lease.version === 1) return { status: 'legacy' as const, pending: new Map<string, string>(), intents: [] as string[], digestSha256: '', entries: 0 };
   const path = leasePath(lease.deviceId, directory);
   const journal = admissionPath(path, lease.token);
   const contents = await readFile(journal, 'utf8');
@@ -263,7 +263,29 @@ async function readDeviceAdmissionJournal(lease: Readonly<DeviceLease>, director
     }
   }
   return { status: pending.size || intents.length ? 'unresolved' as const : 'resolved' as const,
-    pending, intents, digestSha256: createHash('sha256').update(contents).digest('hex') };
+    pending, intents, digestSha256: createHash('sha256').update(contents).digest('hex'), entries: lines.length };
+}
+
+/** Read-only proof that the exact transferred owner never admitted a new operation. */
+export async function inspectUnstartedDeviceTransfer(source: Readonly<DeviceLease>, token: string, directory = lockDirectory()) {
+  const state = await inspectDeviceLock(source.deviceId, directory);
+  if (!state || state.owner !== 'dead' || state.lease.version !== 2 || state.lease.token !== token ||
+    state.lease.cleanupRequired || state.lease.preparationScope !== 'android-flow' ||
+    !source.runDirectory || state.lease.runDirectory !== source.runDirectory ||
+    state.lease.recoveredFrom?.token !== source.token || state.lease.recoveredFrom.runDirectory !== source.runDirectory ||
+    await realpath(source.runDirectory) !== source.runDirectory)
+    throw new Error('Transferred lease is not an unstarted Android continuation');
+  const journal = await readDeviceAdmissionJournal(state.lease, directory);
+  if (journal.status !== 'resolved' || journal.entries !== 1) throw new Error('Transferred continuation already admitted work');
+  const binding = `${leasePath(source.deviceId, directory)}.binding-${token}.json`;
+  try { await readFile(binding); throw new Error('Transferred continuation has a run binding intent'); }
+  catch (error) { if (!codeIs(error, 'ENOENT')) throw error; }
+  const copy = JSON.parse(await readFile(join(source.runDirectory, 'device-lease.json'), 'utf8'));
+  const { cleanupRequired: _cleanup, ...identity } = source;
+  if (!isDeepStrictEqual(copy, identity)) throw new Error('Unstarted transfer source lease evidence mismatch');
+  const after = await inspectDeviceLock(source.deviceId, directory);
+  if (!isDeepStrictEqual(after, state)) throw new Error('Unstarted transfer changed during inspection');
+  return { lease: state.lease, journalDigestSha256: journal.digestSha256 };
 }
 
 /** Evidence only: even a uniquely bound unfinished Flow still needs verified cleanup. */
@@ -391,15 +413,21 @@ export async function continueRecoveredDevice<T>(deviceId: string, expectedToken
     await requireDead();
     const sourceRun = lease.runDirectory ?? lease.recoveredFrom?.runDirectory;
     const next: DeviceLease = { version: 2, token, deviceId, pid: process.pid, host: hostname(), processToken, startedAt: new Date().toISOString(), ...(sourceRun ? { runDirectory: sourceRun } : {}), recoveredFrom: { token: lease.token, ...(sourceRun ? { runDirectory: sourceRun } : {}) }, ...(preparationScope ? { preparationScope } : {}) };
+    // A visible transferred lease must already have a synced journal. Failure
+    // before publication leaves the original owner and token intact.
+    await initializeAdmissions(path, token, deviceId);
+    await requireDead();
     const temporary = `${path}.${token}.tmp`;
-    await writeFile(temporary, JSON.stringify(next), { flag: 'wx' });
+    const nextLease = await open(temporary, 'wx');
+    try { await nextLease.writeFile(JSON.stringify(next)); await nextLease.sync(); }
+    finally { await nextLease.close(); }
     await rename(temporary, path);
     transferred = true;
   } finally {
+    if (!transferred) admissions.delete(nestedKey(path, token));
     await releaseRecoveryGuard(guardPath, guardToken);
   }
   if (!transferred) throw new Error('Device continuation ownership was not transferred');
-  await initializeAdmissions(path, token, deviceId);
   active.set(path, token);
   let failed = false;
   try { return await held.run(new Map([...(held.getStore() ?? []), [path, token]]), operation); }
