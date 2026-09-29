@@ -7,9 +7,36 @@ import { spawn } from 'node:child_process';
 import { once } from 'node:events';
 import { fileURLToPath } from 'node:url';
 import { createRunContext, executeFlow, compileFlowTemplate, inspectFlowProgress, prepareFlowContinuation, recordedFlow, parseFlow } from '../dist/index.js';
+import { prepareAdjudicatedFlowContinuation } from '../dist/flow-progress.js';
+import { createHash } from 'node:crypto';
 
 const condition = text => ({ kind: 'text-visible', text });
 const echo = description => ({ description, echo: description });
+test('first branch action killed during execution retains its decision in adjudication preparation', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'appvanta-active-branch-crash-'));
+  const child = spawn(process.execPath, [fileURLToPath(new URL('./helpers/branch-crash.fixture.mjs', import.meta.url)), root, 'active-branch'], { windowsHide: true, stdio: ['ignore', 'ignore', 'pipe', 'ipc'] });
+  const exited = once(child, 'exit'); let stderr = ''; child.stderr.on('data', bytes => { stderr += bytes; });
+  try {
+    const [message] = await Promise.race([once(child, 'message', { signal: AbortSignal.timeout(15000) }), exited.then(() => { throw new Error(stderr); })]);
+    child.kill('SIGKILL'); await exited;
+    const progress = await inspectFlowProgress(message.root);
+    assert.equal(progress.phase, 'executing'); assert.equal(progress.completedSteps, 0);
+    await assert.rejects(prepareFlowContinuation(message.root, condition('Checkpoint')), /Unsafe continuation boundary/);
+    const prepared = await prepareAdjudicatedFlowContinuation(message.root, condition('Checkpoint'));
+    assert.equal(prepared.resumeAuthorized, false);
+    assert.equal(prepared.source.skippedStepIndex, 1);
+    assert.equal(prepared.flow.steps.length, 3);
+    assert.equal(prepared.flow.steps[1].branch.resolved, true);
+    assert.equal(prepared.flow.steps[2].branch.resolved, true);
+    const bytes = await readFile(join(message.root, 'branch-ready.json'));
+    assert.deepEqual(prepared.source.activeBranchEvidenceSha256, { 'branch-ready.json': { bytes: bytes.length, sha256: createHash('sha256').update(bytes).digest('hex') } });
+    await rm(join(message.root, 'branch-ready.json'));
+    await assert.rejects(prepareAdjudicatedFlowContinuation(message.root, condition('Checkpoint')), /remaining choice is not verified/);
+  } finally {
+    if (child.exitCode === null && child.signalCode === null) { child.kill('SIGKILL'); await exited; }
+    await rm(root, { recursive: true, force: true });
+  }
+});
 const template = { name: 'Nested branches', variables: { inner: 'Inner' }, fragments: {
   child: { parameters: ['condition'], steps: [{ if: { kind: 'text-visible', text: { $var: 'condition' } }, then: [echo('inner true one'), echo('inner true two')], else: [echo('inner false')] }] },
 }, steps: [{ if: condition('Outer'), then: [{ use: 'child', with: { condition: { $var: 'inner' } } }], else: [echo('outer false')] }] };

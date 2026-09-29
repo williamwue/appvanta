@@ -1,11 +1,38 @@
-import { open, readFile } from 'node:fs/promises';
-import { join } from 'node:path';
+import { open, readFile, realpath } from 'node:fs/promises';
+import { join, relative, isAbsolute } from 'node:path';
+import { createHash } from 'node:crypto';
 import { isDeepStrictEqual } from 'node:util';
 import type { FlowStep, BranchSelector } from './flow-schema.js';
 import type { ReportStep } from './report.js';
 
 type Branch = NonNullable<FlowStep['branch']>;
 type Decision = { version: 1; key: string; condition: Branch['when']; matched: boolean; source: 'observed' | 'resolved' };
+async function readDecision(root: string, branch: BranchSelector) {
+  const path = `branch-${branch.key}.json`, directory = await realpath(root), target = await realpath(join(directory, path));
+  const local = relative(directory, target);
+  if (!local || isAbsolute(local) || local === '..' || local.startsWith('../') || local.startsWith('..\\')) throw new Error('Branch evidence escapes run directory');
+  const bytes = await readFile(target), decision = JSON.parse(bytes.toString('utf8'));
+  if (typeof decision?.matched !== 'boolean' || !isDeepStrictEqual(decision, { version: 1, key: branch.key, condition: branch.when, matched: decision.matched,
+    source: branch.resolved === undefined ? 'observed' : 'resolved' }) || (branch.resolved !== undefined && branch.resolved !== decision.matched)) throw new Error('Branch evidence does not match step');
+  return { path, decision: decision as Decision, sha256: createHash('sha256').update(bytes).digest('hex'), bytes: bytes.length };
+}
+
+/** Read-only: records a missing reachable decision without inventing its value. */
+export async function inspectActiveBranchChoices(root: string, step: FlowStep) {
+  const choices: Awaited<ReturnType<typeof readDecision>>[] = [];
+  if (!step.branch) return { choices, selected: true as boolean | undefined };
+  for (const selector of [...step.branch.parents ?? [], step.branch]) {
+    let choice;
+    try { choice = await readDecision(root, selector); }
+    catch (error) {
+      if ((error as NodeJS.ErrnoException).code === 'ENOENT') return { choices, selected: undefined, missingKey: selector.key };
+      throw error;
+    }
+    choices.push(choice);
+    if (choice.decision.matched !== selector.equals) return { choices, selected: false };
+  }
+  return { choices, selected: true };
+}
 export class BranchDecisions {
   private readonly decisions = new Map<string, Decision>();
   private readonly signatures = new Map<string, string>();
@@ -51,9 +78,7 @@ export async function validateCompletedBranch(root: string, step: FlowStep, resu
   for (const branch of [...step.branch.parents ?? [], step.branch]) {
     const path = `branch-${branch.key}.json`;
     if (typeof result.branchMatched !== 'boolean' || !result.evidence?.includes(path)) throw new Error('Missing branch evidence');
-    const decision = JSON.parse(await readFile(join(root, path), 'utf8'));
-    if (typeof decision.matched !== 'boolean' || !isDeepStrictEqual(decision, { version: 1, key: branch.key, condition: branch.when, matched: decision.matched,
-      source: branch.resolved === undefined ? 'observed' : 'resolved' }) || (branch.resolved !== undefined && branch.resolved !== decision.matched)) throw new Error('Branch evidence does not match completed step');
+    const { decision } = await readDecision(root, branch);
     verified.set(branch.key, decision.matched);
     if (decision.matched !== branch.equals) { selected = false; break; }
   }
@@ -62,10 +87,13 @@ export async function validateCompletedBranch(root: string, step: FlowStep, resu
   return verified;
 }
 
-export async function freezeCompletedBranches(root: string, completed: readonly { item: { step: FlowStep }; result: ReportStep }[], remaining: readonly FlowStep[]) {
-  const decisions = new Map<string, boolean>();
+export async function freezeCompletedBranches(root: string, completed: readonly { item: { step: FlowStep }; result: ReportStep }[], remaining: readonly FlowStep[], activeChoices: readonly (readonly [string, boolean])[] = []) {
+  const decisions = new Map<string, boolean>(activeChoices);
   for (const entry of completed) {
-    for (const [key, matched] of await validateCompletedBranch(root, entry.item.step, entry.result)) decisions.set(key, matched);
+    for (const [key, matched] of await validateCompletedBranch(root, entry.item.step, entry.result)) {
+      if (decisions.has(key) && decisions.get(key) !== matched) throw new Error('Active branch differs from completed evidence');
+      decisions.set(key, matched);
+    }
   }
   const freeze = (selector: BranchSelector) => decisions.has(selector.key) ? { ...selector, resolved: decisions.get(selector.key)! } : selector;
   return remaining.map(step => step.branch ? { ...step, branch: { ...freeze(step.branch),

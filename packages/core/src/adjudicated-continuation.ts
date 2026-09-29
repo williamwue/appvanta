@@ -99,6 +99,8 @@ async function inspect(store: TaskStore, successorTaskId: string,
       prepared.source.completedSteps !== preview.completedSteps ||
       !isDeepStrictEqual(prepared.source.completedEvidenceSha256, preview.completedEvidenceSha256))
       throw new Error('Adjudicated continuation progress differs from preview');
+    const previewBranches = preview.activeBranches ? Object.fromEntries(preview.activeBranches.choices.map(choice => [choice.path, { sha256: choice.sha256, bytes: choice.bytes }])) : undefined;
+    if (!isDeepStrictEqual(prepared.source.activeBranchEvidenceSha256, previewBranches)) throw new Error('Adjudicated branch evidence differs from preview');
     const predecessorOrigins = prepared.stepOrigins.map(origin =>
       'flowIndex' in origin && typeof origin.flowIndex === 'number' && origin.flowIndex > 0
         ? claim.stepOrigins[origin.flowIndex - 1] : null);

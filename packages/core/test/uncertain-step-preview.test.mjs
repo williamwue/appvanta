@@ -7,16 +7,17 @@ import { tmpdir, hostname } from 'node:os';
 import { join } from 'node:path';
 import { claimTaskContinuation, previewUncertainTaskStep, recordUncertainStepAdjudication,
   readUncertainStepAdjudication, prepareAdjudicatedTaskContinuation,
-  readAdjudicatedTaskContinuation, TaskStore } from '../dist/index.js';
+  readAdjudicatedTaskContinuation, TaskStore, parseFlow } from '../dist/index.js';
 import { inspectDeviceAdmissionJournal } from '../dist/device-lock.js';
 
 const sha = value => createHash('sha256').update(JSON.stringify(value)).digest('hex');
 const save = (path, value) => writeFile(path, JSON.stringify(value));
 
-async function fixture() {
+async function fixture(withBranch = false) {
   const root = await mkdtemp(join(tmpdir(), 'appvanta-uncertain-step-'));
   const store = new TaskStore(join(root, 'tasks'));
-  const sourceFlow = { version: 1, name: 'source', steps: [1, 2].map(index => ({ description: `Action ${index}`, action: { kind: 'back' } })) };
+  const sourceFlow = parseFlow({ version: 1, name: 'source', steps: [1, 2].map(index => ({ description: `Action ${index}`, action: { kind: 'back' },
+    ...(withBranch ? { branch: { key: 'initial', when: { kind: 'text-visible', text: 'Ready' }, equals: true } } : {}) })) });
   const sourceRun = join(root, 'source-run');
   await mkdir(sourceRun);
   const source = await store.create('device-1', sourceFlow);
@@ -80,6 +81,59 @@ async function realVersion2LeaseFixture(f) {
   return { directory, path, lease,
     journal: `${path}.admission-${lease.token}.jsonl` };
 }
+
+test('uncertain branch preview binds absence, observed decisions and exact source bytes', async () => {
+  const f = await fixture(true);
+  try {
+    const absent = await previewUncertainTaskStep(f.store, f.successor.id);
+    assert.equal(absent.activeBranches.missingKey, 'initial');
+    assert.equal(absent.activeBranches.selected, undefined);
+    const path = join(f.successorRun, 'branch-initial.json');
+    const value = { version: 1, key: 'initial', condition: { kind: 'text-visible', text: 'Ready' }, matched: true, source: 'observed' };
+    await save(path, value);
+    const present = await previewUncertainTaskStep(f.store, f.successor.id);
+    assert.notEqual(present.previewDigestSha256, absent.previewDigestSha256);
+    assert.equal(present.activeBranches.selected, true);
+    assert.equal(present.activeBranches.choices[0].decision.matched, true);
+    await writeFile(path, JSON.stringify(value, null, 2));
+    const reformatted = await previewUncertainTaskStep(f.store, f.successor.id);
+    assert.notEqual(reformatted.previewDigestSha256, present.previewDigestSha256);
+    await save(path, { ...value, key: 'foreign' });
+    await assert.rejects(previewUncertainTaskStep(f.store, f.successor.id), /Branch evidence/);
+  } finally { await rm(f.root, { recursive: true, force: true }); }
+});
+
+for (const persisted of [false, true]) test(`initial branch adjudication requires the reviewed decision: ${persisted}`, async () => {
+  const f = await fixture(true);
+  try {
+    const lock = await leaseFixture(f), path = join(f.successorRun, 'branch-initial.json');
+    const value = { version: 1, key: 'initial', condition: { kind: 'text-visible', text: 'Ready' }, matched: true, source: 'observed' };
+    if (persisted) await save(path, value);
+    const preview = await previewUncertainTaskStep(f.store, f.successor.id);
+    const decision = await recordUncertainStepAdjudication(f.store, f.successor.id, {
+      expectedPreviewDigestSha256: preview.previewDigestSha256, expectedLeaseToken: lock.lease.token,
+      operator: 'fixture-reviewer', reason: 'Fixture postcondition independently verified', verdict: 'postcondition-verified-skip',
+      postconditionCheckpoint: { kind: 'text-visible', text: 'Done' },
+    }, lock.directory);
+    const expected = { decisionId: decision.id, previewDigestSha256: preview.previewDigestSha256, leaseToken: lock.lease.token };
+    if (!persisted) {
+      await assert.rejects(prepareAdjudicatedTaskContinuation(f.store, f.successor.id, expected, lock.directory), /initial branch decision/);
+      await save(path, value);
+      await assert.rejects(prepareAdjudicatedTaskContinuation(f.store, f.successor.id, expected, lock.directory), /preview.*changed|differs/i);
+    } else {
+      const written = await prepareAdjudicatedTaskContinuation(f.store, f.successor.id, expected, lock.directory);
+      assert.equal(written.claim.flow.steps[1].branch.resolved, true);
+      assert.equal(written.claim.resumeAuthorized, false);
+      const bytes = await readFile(path);
+      assert.deepEqual(written.claim.source.activeBranchEvidenceSha256['branch-initial.json'], { sha256: createHash('sha256').update(bytes).digest('hex'), bytes: bytes.length });
+      const receipt = { ...expected, preparationId: written.claim.id, preparationDigestSha256: written.preparationDigestSha256 };
+      assert.equal((await readAdjudicatedTaskContinuation(f.store, f.successor.id, receipt, lock.directory)).claim.resumeAuthorized, false);
+      await writeFile(path, JSON.stringify(value, null, 2));
+      await assert.rejects(readAdjudicatedTaskContinuation(f.store, f.successor.id, receipt, lock.directory), /preview.*changed|differs/i);
+    }
+    assert.deepEqual(JSON.parse(await readFile(lock.path, 'utf8')), lock.lease);
+  } finally { await rm(f.root, { recursive: true, force: true }); }
+});
 
 test('adjudication records a bound skip intent without changing task, run, or lease evidence', async () => {
   const f = await fixture();

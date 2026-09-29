@@ -7,6 +7,7 @@ import { prepareFlowContinuation, prepareAdjudicatedFlowContinuation, previewExe
 import { readContinuationLineage } from './continuation-lineage.js';
 import type { TaskInstructionRecord } from './task-instructions.js';
 import { TaskStore } from './tasks.js';
+import { inspectActiveBranchChoices } from './branch-decision.js';
 
 const digest = (content: Buffer) => ({ sha256: createHash('sha256').update(content).digest('hex'), bytes: content.length });
 const requireObject = (value: unknown, name: string): Record<string, any> => {
@@ -43,6 +44,21 @@ async function captureInputs(store: TaskStore, sourceTaskId: string, successorTa
     const progress = files[`${label}/progress.json`];
     if (progress) {
       const snapshot = requireObject(JSON.parse(progress.toString('utf8')), `${label} progress`);
+      if (snapshot.active?.step?.branch) {
+        const step = parseFlow({ name: 'Active branch input', steps: [snapshot.active.step] }).steps[0]!;
+        for (const selector of [...step.branch!.parents ?? [], step.branch!]) {
+          const path = `branch-${selector.key}.json`;
+          const file = join(root, path);
+          let target;
+          try { target = await realpath(file); }
+          catch (error) { if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error; }
+          if (target) {
+            const local = relative(root, target);
+            if (!local || isAbsolute(local) || local === '..' || local.startsWith('../') || local.startsWith('..\\')) throw new Error('Active branch evidence escapes run directory');
+          }
+          await capture(`${label}/active-branch/${path}`, target ?? file);
+        }
+      }
       for (const entry of snapshot.completed ?? []) {
         for (const path of entry.result?.evidence ?? []) {
           if (typeof path !== 'string' || !path || isAbsolute(path) || path.includes('\\') || path.includes(':')
@@ -143,6 +159,7 @@ async function evaluatePreview(store: TaskStore, successorTaskId: string) {
       ? { flowIndex: progress.active.flowIndex } : { instructionId: progress.active.instructionId },
     ...(activeOrigin ? { sourceOrigin: activeOrigin } : {}),
     completedSteps: progress.completedSteps, completedEvidenceSha256: progress.completedEvidenceSha256,
+    ...(progress.active.step.branch ? { activeBranches: await inspectActiveBranchChoices(runDirectory, progress.active.step) } : {}),
     resumeAuthorized: false as const } };
 }
 

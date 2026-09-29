@@ -4,7 +4,7 @@ import { isAbsolute, join, relative, resolve } from 'node:path';
 import { isDeepStrictEqual } from 'node:util';
 import { parseFlow, parseCondition, type FlowStep } from './flow-schema.js';
 import { validateCompletedCondition } from './step-condition.js';
-import { freezeCompletedBranches } from './branch-decision.js';
+import { freezeCompletedBranches, inspectActiveBranchChoices } from './branch-decision.js';
 import type { TaskInstructionRecord } from './task-instructions.js';
 
 export type ProgressEvidenceHashes = Record<string, { sha256: string; bytes: number }>;
@@ -154,19 +154,15 @@ export async function prepareAdjudicatedFlowContinuation(root: string, checkpoin
     ...snapshot.pending,
   ];
   const { resetApplications: omittedResets, steps: _steps, ...configuration } = flow;
-  const [frozenActive] = await freezeCompletedBranches(root, snapshot.completed, [snapshot.active.step]);
-  if (frozenActive?.branch) {
-    for (const selector of [...frozenActive.branch.parents ?? [], frozenActive.branch]) {
-      if (selector.resolved === undefined) throw new Error('Cannot adjudicate an unfinished initial branch decision; its remaining choice is not verified');
-      if (selector.resolved !== selector.equals) break;
-    }
-  }
+  const activeBranches = await inspectActiveBranchChoices(root, snapshot.active.step);
+  if (activeBranches.selected === undefined) throw new Error('Cannot adjudicate an unfinished initial branch decision; its remaining choice is not verified');
   const continuation = parseFlow({ ...configuration, name: `Continue after adjudication: ${flow.name}`, steps: [
     { description: 'Verify adjudicated postcondition on live device', action: { kind: 'wait', condition, timeoutMs } },
-    ...await freezeCompletedBranches(root, snapshot.completed, remaining.map(item => item.step)),
+    ...await freezeCompletedBranches(root, snapshot.completed, remaining.map(item => item.step), activeBranches.choices.map(choice => [choice.decision.key, choice.decision.matched] as const)),
   ] });
   return { flow: continuation, source: { runDirectory: await realpath(root), revision: inspection.revision,
     flowSha256: snapshot.flowSha256 as string, completedSteps: inspection.completedSteps,
+    ...(snapshot.active.step.branch ? { activeBranchEvidenceSha256: Object.fromEntries(activeBranches.choices.map(choice => [choice.path, { sha256: choice.sha256, bytes: choice.bytes }])) } : {}),
     skippedStepIndex: inspection.completedSteps + 1, completedEvidenceSha256: snapshot.completed.map(
       (entry: { evidenceSha256: ProgressEvidenceHashes }) => entry.evidenceSha256) },
     omittedResets: omittedResets ?? [],
