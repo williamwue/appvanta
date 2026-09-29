@@ -134,7 +134,7 @@ export function parseAction(value: unknown): Action {
     case 'share-file': {
       keys(a, ['kind', 'uri', 'mimeType', 'packageName']);
       const uri = text(a.uri), mimeType = text(a.mimeType);
-      if (uri.length > 4096 || /[\s\x00-\x1f\x7f]/u.test(uri) || !/^content:\/\/[A-Za-z0-9_.-]+\//.test(uri)) throw new Error('Attachment requires a content URI with authority and path');
+      if (uri.length > 4096 || /[#\s\x00-\x1f\x7f]/u.test(uri) || !/^content:\/\/[A-Za-z0-9_.-]+\//.test(uri)) throw new Error('Attachment requires a content URI with authority and path, without a fragment');
       const parsed = new URL(uri);
       if (parsed.protocol !== 'content:' || parsed.username || parsed.password || parsed.port || parsed.hash || !parsed.hostname) throw new Error('Invalid attachment URI');
       if (!/^[A-Za-z0-9][A-Za-z0-9!#$&^_.+-]*\/[A-Za-z0-9][A-Za-z0-9!#$&^_.+-]*$/.test(mimeType) || mimeType.length > 127) throw new Error('Attachment requires an explicit MIME type');

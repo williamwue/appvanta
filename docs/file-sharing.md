@@ -19,6 +19,8 @@ URI 必须是带 authority/path 的 `content://`，最多 4096 字符，不接�
 
 平台依据：[Android 文件分享](https://developer.android.com/training/secure-file-sharing)、[URI 读取授权](https://developer.android.com/reference/androidx/core/content/FileProvider)、[provider 可见性声明](https://developer.android.com/training/package-visibility/declaring)。
 
+MCP 公布的 JSON schema 与运行时解析器均拒绝 fragment，包括末尾空 `#`；query 和编码后的 `%23` 仍可使用。接口一致性回归覆盖这几类 URI，避免客户端依据 schema 构造运行时必然拒绝的附件动作。
+
 ## 验证
 
 两个独立测试应用位于 `tools/share-source` 和 `tools/share-receiver`，不属于产品运行时依赖。来源只生成具名 4096 字节测试文件，私有 provider 只允许读取并显式授权 shell；接收应用读取完整字节、计算 SHA-256、尝试写入并记录拒绝。来源的准备/清理 Activity 要求 DUMP 权限。测试应用为 debuggable 且没有网络权限，供 `run-as` 提取测试报告；不用于承载用户文件。
