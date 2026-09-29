@@ -1,7 +1,7 @@
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { createHash, randomUUID } from 'node:crypto';
-import { mkdir, open, readFile, writeFile } from 'node:fs/promises';
+import { mkdir, open, readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
 
@@ -47,12 +47,28 @@ export async function restoreEmulatorShake(adb: string, device: string, recordPa
   const bytes = await readFile(recordPath), record = JSON.parse(bytes.toString('utf8'));
   if (record.version !== 1 || record.device !== device || !Array.isArray(record.sequence) || record.sequence.length < 2 || record.sequence.length > 40) throw new Error('Invalid emulator shake recovery record');
   const original = vector(record.original), sequence = record.sequence.map(vector);
+  if (!record.options || JSON.stringify(sequence) !== JSON.stringify(accelerationSequence(original, record.options))) throw new Error('Emulator shake recovery plan mismatch');
+  const sourceSha256 = createHash('sha256').update(bytes).digest('hex');
+  let receiptBytes: string | undefined;
+  try { receiptBytes = await readFile(`${recordPath}.restored.json`, 'utf8'); }
+  catch (error) { if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error; }
+  if (receiptBytes !== undefined) {
+    const receipt = JSON.parse(receiptBytes);
+    if (receipt.version !== 1 || receipt.device !== device || receipt.sourceSha256 !== sourceSha256
+      || !same(vector(receipt.restored), original) || typeof receipt.restoredAt !== 'string'
+      || !Number.isFinite(Date.parse(receipt.restoredAt))) throw new Error('Invalid emulator shake restoration receipt');
+    return;
+  }
   const current = await readEmulatorAcceleration(adb, device);
   if (![original, ...sequence].some(value => same(current, value))) throw new Error('Acceleration changed externally; recovery record retained');
   if (!same(current, original)) await setAcceleration(adb, device, original);
   const restored = await readEmulatorAcceleration(adb, device);
   if (!same(restored, original)) throw new Error('Acceleration restoration unverified');
-  await writeFile(`${recordPath}.restored.json`, JSON.stringify({ version: 1, device, sourceSha256: createHash('sha256').update(bytes).digest('hex'), restored, restoredAt: new Date().toISOString() }, null, 2));
+  const handle = await open(`${recordPath}.restored.json`, 'wx');
+  try {
+    await handle.writeFile(JSON.stringify({ version: 1, device, sourceSha256, restored, restoredAt: new Date().toISOString() }, null, 2));
+    await handle.sync();
+  } finally { await handle.close(); }
 }
 
 /** Caller must hold the device lease for the entire operation and recovery. */

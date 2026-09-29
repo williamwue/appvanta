@@ -48,6 +48,10 @@ const result = await withDeviceLock(device, async () => {
       assert.equal(update.stdout.trim(), 'OK');
       observedConflict = await readEmulatorAcceleration('adb', device);
       assert(close(observedConflict, external));
+      const completedReceipt = await readFile(`${normal.recordPath}.restored.json`, 'utf8');
+      await restoreEmulatorShake('adb', device, normal.recordPath);
+      assert(close(await readEmulatorAcceleration('adb', device), external), 'Completed recovery must leave later sensor changes alone');
+      assert.equal(await readFile(`${normal.recordPath}.restored.json`, 'utf8'), completedReceipt);
       await assert.rejects(restoreEmulatorShake('adb', device, conflictPath), error => {
         conflictError = String(error);
         return /changed externally/.test(conflictError);
@@ -62,7 +66,7 @@ const result = await withDeviceLock(device, async () => {
       assert.equal(cleanup.stdout.trim(), 'OK');
       assert(close(await readEmulatorAcceleration('adb', device), original));
     }
-    return { original, normal, duringCancellation: during, restored, cancellation: String(cancelled.error), conflict: { recordPath: conflictPath, observed: observedConflict, error: conflictError, preserved: true, fixtureCleanupVerified: true } };
+    return { original, normal, duringCancellation: during, restored, cancellation: String(cancelled.error), completedRecoveryPreservedLaterChange: true, conflict: { recordPath: conflictPath, observed: observedConflict, error: conflictError, preserved: true, fixtureCleanupVerified: true } };
   } catch (error) {
     try { assert(close(await readEmulatorAcceleration('adb', device), original)); }
     catch { await retainDeviceLockForCleanup(device, root); }
