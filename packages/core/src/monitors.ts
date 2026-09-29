@@ -2,6 +2,7 @@ import { lstat, mkdir, readFile, readdir, realpath, rename, writeFile } from 'no
 import { join } from 'node:path';
 import { hostname } from 'node:os';
 import { randomUUID } from 'node:crypto';
+import { setTimeout as delay } from 'node:timers/promises';
 
 export type MonitorStatus = 'queued' | 'running' | 'releasing' | 'completed' | 'released' | 'failed' | 'interrupted';
 export interface MonitorRecord {
@@ -21,6 +22,15 @@ export interface MonitorRecord {
 }
 export const terminalMonitor = (status: MonitorStatus) => ['completed', 'released', 'failed', 'interrupted'].includes(status);
 const uuidPattern = /^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/;
+const publishMonitor = async (temporary: string, path: string) => {
+  for (let attempt = 0; ; attempt++) {
+    try { return await rename(temporary, path); }
+    catch (error) {
+      if (process.platform !== 'win32' || attempt >= 39 || !error || typeof error !== 'object' || !('code' in error) || !['EPERM', 'EACCES', 'EBUSY'].includes(String(error.code))) throw error;
+      await delay(50);
+    }
+  }
+};
 
 export class MonitorStore {
   private readonly writes = new Map<string, Promise<void>>();
@@ -56,7 +66,7 @@ export class MonitorStore {
       } catch (error) { if (!error || typeof error !== 'object' || !('code' in error) || error.code !== 'ENOENT') throw error; }
       const temporary = join(root, `state-${randomUUID()}.tmp`);
       await writeFile(temporary, snapshot, { flag: 'wx' });
-      await rename(temporary, join(root, 'monitor.json'));
+      await publishMonitor(temporary, join(root, 'monitor.json'));
     });
     this.writes.set(record.id, current);
     try { await current; } finally { if (this.writes.get(record.id) === current) this.writes.delete(record.id); }
@@ -68,7 +78,7 @@ export class MonitorStore {
     if (existing.status !== 'queued' || existing.owner.session !== this.session || existing.owner.pid !== process.pid) throw new Error('Queued monitor changed before transfer');
     const transferred: MonitorRecord = { ...record, owner: { pid: workerPid, host: hostname(), session: workerSession } };
     const temporary = join(this.path(record.id), `transfer-${randomUUID()}.tmp`);
-    await writeFile(temporary, JSON.stringify(transferred, null, 2), { flag: 'wx' }); await rename(temporary, path);
+    await writeFile(temporary, JSON.stringify(transferred, null, 2), { flag: 'wx' }); await publishMonitor(temporary, path);
     return transferred;
   }
   async failTransferredStartup(id: string, workerPid: number, workerSession: string, error: string): Promise<MonitorRecord> {
@@ -77,7 +87,7 @@ export class MonitorStore {
     if (existing.status !== 'queued' || existing.owner.pid !== workerPid || existing.owner.session !== workerSession) throw new Error('Transferred monitor changed before startup failure');
     const failed: MonitorRecord = { ...existing, status: 'failed', finishedAt: new Date().toISOString(), error };
     const temporary = join(this.path(id), `startup-failure-${randomUUID()}.tmp`);
-    await writeFile(temporary, JSON.stringify(failed, null, 2), { flag: 'wx' }); await rename(temporary, path);
+    await writeFile(temporary, JSON.stringify(failed, null, 2), { flag: 'wx' }); await publishMonitor(temporary, path);
     return failed;
   }
   async get(id: string): Promise<MonitorRecord> {

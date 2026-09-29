@@ -10,6 +10,8 @@ API 37 / Android 17 已验证裁决后步骤边界再次崩溃、只读等待执
 
 已核验的公开提交 `14f6854` 对应本地 `1b3ad37`，[托管 CI](https://github.com/williamwue/appvanta/actions/runs/36602005805) 四个任务均通过。该结果不代表后续提交；以下早期失败、工具数与测试数均属于历史记录。公开快照不包含本地历史提交及忽略的设备证据，正式版本发行、跨版本迁移和真机/OEM 验收仍未完成。
 
+后续公开快照 `3957caf` 的 [CI](https://github.com/williamwue/appvanta/actions/runs/36604519328) 已通过 Linux/API 35 录屏和 Perfetto 拉取中断恢复，以及 Linux/macOS 构建测试；Windows 监控 Worker 转移记录时 EPERM，整次运行失败。本地已用真实 Windows 文件共享占用复现同类错误，为监控记录原子发布增加约 2 秒的有界重试。短暂占用后转移成功，持续占用仍失败且原所有权记录不变；四包构建、core 97、Android 74、脚本 38 项共 209 项测试通过。该修正的托管验收须以对应新提交结果为准。
+
 ## 本轮已完成的范围
 
 - 文本分享进入 Action/Flow/MCP，Markor 原文件验证中文、多行和特殊字符，目标不存在时阻止后续动作。

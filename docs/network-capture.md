@@ -190,3 +190,6 @@ Perfetto 场景也通过：录屏已经恢复到本地并清理远端，trace �
 最终脚本的录屏场景复跑也通过，证据为 `.appvanta/runs/network-capture-recovery-1790702298388/verification.json`；脚本测试 36 项通过。
 首次尝试 `network-capture-recovery-1790701775686` 因验收脚本误读 `operation` 而非 `phase` 失败，记录保留；原 token 经正常恢复入口清理成功后才重跑。
 这覆盖主机 ADB 客户端到服务端链路中断，不证明设备端传输、USB 拔插或主机重启。
+
+托管补充：公开快照 `3957caf` 的 GitHub Actions 运行 `36604519328` 中，Linux / API 35 的 Android job 已通过上述录屏和 Perfetto 拉取中断恢复检查，并上传证据。
+该运行的 Windows job 因独立监控 Worker 转移 `monitor.json` 时发生 EPERM 失败，因此整次 CI 不能计为通过；Linux/macOS 构建测试通过。
