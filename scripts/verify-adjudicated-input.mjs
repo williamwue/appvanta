@@ -90,6 +90,10 @@ let imeBefore;
 try {
   await withDeviceLock(deviceId, async () => {
     imeBefore = await imeState();
+    if (unicode) {
+      const available = (await adb('shell', 'ime', 'list', '-a', '-s')).trim().split(/\r?\n/);
+      assert(available.includes('dev.appvanta.input/.InputService'), 'Build and install the AppVanta input helper before Unicode adjudication verification; see docs/input.md');
+    }
     await writeFile(join(directory, 'fixture.json'), JSON.stringify({ deviceFile, original, marker, inputText, imeBefore }, null, 2));
     storage = await startAppOps([{ packageName: 'net.gsantner.markor', operation: 'MANAGE_EXTERNAL_STORAGE', mode: 'allow' }], deviceId, directory);
     await driver.stopApp(deviceId, 'net.gsantner.markor');

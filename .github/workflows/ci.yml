@@ -171,6 +171,8 @@ jobs:
       - name: Verify branch adjudication after committed Unicode input
         timeout-minutes: 5
         run: |
+          python scripts/build-input-ime.py
+          adb -s emulator-5554 install -r .appvanta/input-ime/appvanta-input.apk
           node scripts/verify-adjudicated-input.mjs emulator-5554 unicode branch
           node scripts/verify-adjudicated-input.mjs emulator-5554 unicode nested mcp
       - name: Verify application accelerometer callbacks

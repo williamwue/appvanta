@@ -67,6 +67,8 @@ appvanta run-flow emulator-5554 compiled-branch.json
 
 嵌套及条件变化补充：`node scripts/verify-adjudicated-input.mjs emulator-5554 unicode nested mcp` 在 API 37 通过。外层检查编辑器可见，内层检查编辑器全文精确等于原文；真实输入使内层条件从真变假，驱动返回后、完成记录写入前强杀。裁决准备绑定两份原始决定，MCP 续跑仍保存文件，两层 else 均跳过；新运行的两份决定均为 `source: resolved`。证据 `.appvanta/runs/adjudicated-input-1790713482833/verification.json` 包含条件变化、全文比较、输入法恢复及文件清理结果。托管 MCP 用例已升级为此嵌套场景，CLI 保留单层场景。此处覆盖两层都选中的单次中断；不代表所有祖先选择组合、重复裁决或分支文件损坏均已在设备上验证。
 
+托管运行 `36625981175` 和 `36626398752` 失败，尚不能计为托管分支裁决通过。后者的后继步骤报告明确记录 `Install the AppVanta input helper first`：干净模拟器缺少 Unicode 输入 helper。下载的 580 个归档文件均已核对大小与 SHA-256。CI 已补源码构建及安装，验收器也在修改夹具前检查 helper；修复后的托管结果仍须单独确认。
+
 验证：core 专项使用变化的假设备状态证明只查询一次，并验证篡改拒绝、错误停止和真实宿主强杀后的决定固定。API 37 的 `flow-branch-1790711504339/verification.json` 验证 CLI/MCP 均产生 skipped/skipped/passed/passed 四步结果，未选中动作没有执行。四包构建及 core 111、Android 87、脚本 40 项共 238 项测试通过。设备验收已加入托管 CI，结果需绑定对应后续提交。
 
 嵌套验收：四种真假组合、非法分支/祖先拒绝、外层真假两种真实宿主强杀续跑均通过。API 37 的 `flow-branch-1790712052784/verification.json` 验证真实 CLI 编译嵌套模板及 CLI/MCP 执行，输出 skipped/passed/passed/skipped，两个决定分别为真和假。完整构建及 core 117、Android 87、脚本 40 项共 244 项测试通过。基础分支公开 `f113b79` 的托管运行 `36622517753` 已全绿，但不包含本轮嵌套实现。
