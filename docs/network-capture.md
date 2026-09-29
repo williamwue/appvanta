@@ -193,3 +193,7 @@ Perfetto 场景也通过：录屏已经恢复到本地并清理远端，trace �
 
 托管补充：公开快照 `3957caf` 的 GitHub Actions 运行 `36604519328` 中，Linux / API 35 的 Android job 已通过上述录屏和 Perfetto 拉取中断恢复检查，并上传证据。
 该运行的 Windows job 因独立监控 Worker 转移 `monitor.json` 时发生 EPERM 失败，因此整次 CI 不能计为通过；Linux/macOS 构建测试通过。
+
+托管运行 `36606437185` 的录屏中断验收曾等待拉取 60 秒后失败，未观察到 DATA 截断；该失败保留。回归用例确认隔离转发器会扣留空文件的 DONE 响应，修正后透传非 DATA 响应，并保留分块 DATA 头识别。原运行实际收到的首个回复未被记录，不能断言其远端文件为空。
+夹具现在先观察录屏远端文件至少有两个字节，再强杀宿主；写入 capture-ready.json 记录观测大小，避免将尚无数据的采集当作拉取中途断连。
+最终脚本本地 API 37 录屏、Perfetto 场景分别通过：`network-capture-recovery-1790704032468`、`network-capture-recovery-1790704059009`，脚本测试 40 项通过。新的转发器与就绪检查仍需对应提交的托管复验。

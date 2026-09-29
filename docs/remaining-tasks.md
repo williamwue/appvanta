@@ -91,7 +91,7 @@ API 37 / Android 17 已验证裁决后步骤边界再次崩溃、只读等待执
 - [x] 发布实验性源码快照并完成公开项目主页及安全发布准备；公开 `main` 初始提交 [`93749a0`](https://github.com/williamwue/appvanta/commit/93749a0cb87937149376aaac16adf8d199660acb) 的树与本地集成修订 `fda6c8b` 一致，[私密漏洞报告入口](https://github.com/williamwue/appvanta/security/advisories/new)已启用；这不等于完整产品验收或 npm 发布。
 - [x] Windows/Linux/macOS 托管构建、测试、干净安装与子进程行为验收。
 - [x] 托管 Android Emulator 验收及失败证据上传；CI/Jenkins 文档与实际执行对齐。
-- [ ] 各系统从空目录安装 tarball，验证 CLI/doctor/MCP，复验升级、迁移、卸载。已补真实 `0.1.0 → 0.2.0-alpha.1` tarball 升级的 Windows 本地验收：旧 v1 任务读取、失去所有者的待办不自动执行、未知记录及项目数据在卸载后保留。三系统升级 CI 与其他数据模式迁移仍需验收，见 release-checklist.md。
+- [ ] 各系统从空目录安装 tarball，验证 CLI/doctor/MCP，复验升级、迁移、卸载。真实 `0.1.0 → 0.2.0-alpha.1` tarball 升级已在 Windows/Linux/macOS 托管 CI 通过：旧 v1 任务、批次、监控读取，失去所有者的待办不自动执行，未知记录及项目数据在卸载后保留。其他数据模式迁移与运行中升级仍需验收，见 release-checklist.md。
 - [ ] 发布版本、tag、可复核构建记录、发行物第三方归属及发布报告。
 - [ ] 对固定竞品基线重新逐项审计，补未盘点能力及证据；所有目标平台验收后才声明完整覆盖。
 

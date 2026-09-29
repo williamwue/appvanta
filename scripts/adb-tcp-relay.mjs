@@ -1,12 +1,12 @@
 import { createServer, connect } from 'node:net';
 
-export async function createAdbTcpRelay() {
+export async function createAdbTcpRelay(upstreamPort = 5037) {
   const sockets = new Set();
   let offline = false;
   let pullTargets, interruptedPull;
   const relay = createServer(client => {
     if (offline) { client.destroy(); return; }
-    const server = connect({ host: '127.0.0.1', port: 5037 });
+    const server = connect({ host: '127.0.0.1', port: upstreamPort });
     for (const socket of [client, server]) {
       sockets.add(socket); socket.on('close', () => sockets.delete(socket));
     }
@@ -28,7 +28,15 @@ export async function createAdbTcpRelay() {
       if (target && !interruptedPull) {
         response = Buffer.concat([response, chunk]);
         const data = response.indexOf(Buffer.from('DATA'));
-        if (data < 0 || response.length <= data + 8) return;
+        if (data < 0) {
+          let pending = Math.min(3, response.length);
+          while (pending && !response.subarray(-pending).equals(Buffer.from('DATA').subarray(0, pending))) pending--;
+          const ready = response.subarray(0, response.length - pending);
+          if (ready.length && !client.write(ready)) server.pause();
+          response = response.subarray(response.length - pending);
+          return;
+        }
+        if (response.length <= data + 8) return;
         const frameBytes = response.readUInt32LE(data + 4);
         if (frameBytes < 2) { client.write(response); response = Buffer.alloc(0); return; }
         interruptedPull = { remote: target, frameBytes, deliveredPayloadBytes: 1 };

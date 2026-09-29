@@ -13,6 +13,8 @@
 
 升级验收随后扩展到旧包实际生成的批次与监控记录：各一份终结记录和一份所有者已退出的待办记录。新包 SDK 读取终结记录保持内容一致，待办均标为 interrupted；通过已安装 MCP 的 `get_batch` 和 `get_monitor` 再核验待办状态。六份记录及未知格式文件在升级、查询、卸载之后均逐字节保留。Windows 本地证据为 `.appvanta/runs/upgrade-1790703644487/verification.json`；后续结果还包含合成旧记录、读取结果与记录摘要，便于复核。
 
+公开提交 `b670274895758961f9cc6f6f1b31a671c796fe8f` 的 [托管运行 36606780001](https://github.com/williamwue/appvanta/actions/runs/36606780001) 四个任务全部通过。Windows/Linux/macOS 的升级报告均为 passed、sourceDirty false，覆盖六份旧记录和一份未知格式文件；三份下载证据归档均通过文件大小和摘要校验。该结果证明上述版本对及记录类型，尚不覆盖运行中 Worker 升级、降级或其他数据模式迁移。
+
 ## 源码仓库门禁
 
 - [x] 选择 Apache-2.0 并加入完整许可证文本。

@@ -35,6 +35,21 @@ try {
     : execFileSync('ps', ['-p', String(network.workerPid), '-o', 'command='], { encoding: 'utf8' });
   assert(command.includes('capture-network.py'));
   assert(command.toLowerCase().replaceAll('\\', '/').includes(join(message.run, 'network').toLowerCase().replaceAll('\\', '/')));
+  if (pullDisconnect) {
+    const records = await Promise.all((await readdir(join(message.run, 'captures'))).filter(name => name.endsWith('.capture.json')).map(async name => JSON.parse(await readFile(join(message.run, 'captures', name), 'utf8'))));
+    const screen = records.find(record => record.kind === 'screen');
+    assert(screen, 'Screen capture record required');
+    const deadline = Date.now() + 20000;
+    let bytes = 0;
+    while (Date.now() < deadline) {
+      const result = await promisify(execFile)(process.env.ADB_PATH || 'adb', ['-s', device, 'shell', `test -f ${screen.remote} && stat -c %s ${screen.remote} || echo 0`], { encoding: 'utf8', timeout: 5000, windowsHide: true });
+      bytes = Number(result.stdout.trim());
+      if (bytes >= 2) break;
+      await new Promise(done => setTimeout(done, 100));
+    }
+    assert(bytes >= 2, 'Screen capture must contain bytes before testing mid-pull disconnection');
+    await writeFile(join(root, 'capture-ready.json'), JSON.stringify({ remote: screen.remote, bytes, observedAt: new Date().toISOString() }, null, 2));
+  }
   process.kill(network.workerPid, 'SIGKILL'); owner.kill('SIGKILL'); await exited;
   const state = await inspectDeviceLock(device); assert.equal(state.owner, 'dead'); assert.equal(state.lease.pid, owner.pid);
   let cancellation;
