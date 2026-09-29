@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createHash, randomUUID } from 'node:crypto';
 import { hostname } from 'node:os';
-import { mkdtemp, mkdir, readFile, rm, writeFile } from 'node:fs/promises';
+import { mkdtemp, mkdir, readFile, realpath, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { parseFlow, TaskStore, prepareAdjudicatedTaskContinuation, recordUncertainStepAdjudication,
@@ -20,12 +20,13 @@ async function executionFixture() {
     { description: 'later', action: { kind: 'back' } },
   ] };
   const sourceRun = join(root, 'source-run'); await mkdir(sourceRun);
+  const canonicalSourceRun = await realpath(sourceRun);
   const source = await store.create('device-1', flow); source.status = 'running'; source.runDirectory = sourceRun; await store.save(source);
   await save(join(sourceRun, 'flow.json'), flow); await save(join(sourceRun, 'device.json'), { id: 'device-1' });
   await save(join(sourceRun, 'progress.json'), { version: 1, revision: 1, deviceId: 'device-1', flowSha256: sha(flow), phase: 'boundary', completed: [], active: { flowIndex: 0, step: flow.steps[0] }, pending: [{ flowIndex: 1, step: flow.steps[1] }] });
   await save(join(store.directory, source.id, 'task.json'), { ...source, owner: { ...source.owner, pid: 2147483647 } });
   const claimDir = join(store.directory, source.id, 'continuation'); await mkdir(claimDir);
-  const claim = { version: 1, id: randomUUID(), sourceTaskId: source.id, deviceId: 'device-1', owner: { pid: 1, host: hostname() }, createdAt: new Date().toISOString(), flow: parseFlow({ version: 1, name: 'Continue: source', steps: [{ description: 'Verify continuation checkpoint', action: { kind: 'wait', condition: { kind: 'text-visible', text: 'Ready' }, timeoutMs: 1000 } }, flow.steps[0], flow.steps[1]] }), source: { runDirectory: sourceRun, revision: 1, flowSha256: sha(flow), completedSteps: 0 }, omittedResets: [], stepOrigins: [{ continuationIndex: 1, flowIndex: 0 }, { continuationIndex: 2, flowIndex: 1 }], resumeAuthorized: false };
+  const claim = { version: 1, id: randomUUID(), sourceTaskId: source.id, deviceId: 'device-1', owner: { pid: 1, host: hostname() }, createdAt: new Date().toISOString(), flow: parseFlow({ version: 1, name: 'Continue: source', steps: [{ description: 'Verify continuation checkpoint', action: { kind: 'wait', condition: { kind: 'text-visible', text: 'Ready' }, timeoutMs: 1000 } }, flow.steps[0], flow.steps[1]] }), source: { runDirectory: canonicalSourceRun, revision: 1, flowSha256: sha(flow), completedSteps: 0 }, omittedResets: [], stepOrigins: [{ continuationIndex: 1, flowIndex: 0 }, { continuationIndex: 2, flowIndex: 1 }], resumeAuthorized: false };
   await save(join(claimDir, 'claim.json'), claim);
   await save(join(sourceRun, 'continuation.json'), claim);
   const successor = await store.create('device-1', claim.flow); const successorRun = join(root, 'successor-run'); await mkdir(successorRun);

@@ -203,12 +203,34 @@ export class TaskStore {
     return this.enqueue(id, async () => {
       const root = this.path(id);
       const claimLockPath = join(root, 'reserved-claim.lock');
-      let claimLock;
-      try { claimLock = await open(claimLockPath, 'wx'); }
-      catch (error) {
-        if (isCode(error, 'EEXIST')) throw new Error('Reserved task claim is already in progress');
-        throw error;
+      let claimLock: Awaited<ReturnType<typeof open>> | undefined;
+      for (let attempt = 0; attempt < 5 && !claimLock; attempt++) {
+        try {
+          claimLock = await open(claimLockPath, 'wx');
+          await claimLock.writeFile(JSON.stringify({ version: 1, pid: process.pid, host: hostname(), session: this.session,
+            startedAt: new Date().toISOString(), revision: expectedRevision ?? null }));
+          await claimLock.sync();
+        } catch (error) {
+          if (claimLock) { await claimLock.close().catch(() => {}); claimLock = undefined; }
+          if (!isCode(error, 'EEXIST')) throw error;
+          let lock: any;
+          try { lock = JSON.parse(await readFile(claimLockPath, 'utf8')); }
+          catch (readError) { if (isCode(readError, 'ENOENT')) continue; throw readError; }
+          if (!lock || lock.version !== 1 || !Number.isSafeInteger(lock.pid) || lock.pid < 1 ||
+            typeof lock.host !== 'string' || !uuidPattern.test(lock.session))
+            throw new Error('Invalid reserved task claim lock; refusing takeover');
+          if (lock.host !== hostname()) throw new Error('Reserved task claim owner is unknown; refusing takeover');
+          try { process.kill(lock.pid, 0); throw new Error('Reserved task claim is already in progress'); }
+          catch (ownerError) {
+            if (ownerError instanceof Error && ownerError.message === 'Reserved task claim is already in progress') throw ownerError;
+            if (!isCode(ownerError, 'ESRCH')) throw new Error('Reserved task claim owner is unknown; refusing takeover');
+          }
+          const stale = `${claimLockPath}.stale-${randomUUID()}`;
+          try { await rename(claimLockPath, stale); await unlink(stale); }
+          catch (renameError) { if (!isCode(renameError, 'ENOENT')) throw renameError; }
+        }
       }
+      if (!claimLock) throw new Error('Reserved task claim lock changed repeatedly');
       try {
       const marker = JSON.parse(await readFile(join(root, 'reservation.json'), 'utf8')) as Record<string, unknown>;
       if (marker.version !== 1 || marker.taskId !== id || marker.reservationId !== reservation.id ||

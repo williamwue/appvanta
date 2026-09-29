@@ -60,3 +60,14 @@ test('concurrent independent reserved claims fail closed at the filesystem claim
     assert.match(String(results.find(result => result.status === 'rejected')?.reason), /claim|queued/);
   } finally { await rm(f.root, { recursive: true, force: true }); }
 });
+
+test('reserved claim recovers only a stale local claim lock', async () => {
+  const f = await fixture();
+  try {
+    await writeFile(join(f.root, taskId, 'reserved-claim.lock'), JSON.stringify({ version: 1, pid: 2147483647,
+      host: hostname(), session: 'ffffffff-ffff-4fff-8fff-ffffffffffff', startedAt: new Date().toISOString(), revision: 2 }));
+    const claimed = await f.store.claimReserved(taskId, f.receipt, 2);
+    assert.equal(claimed.status, 'running');
+    assert.equal(await readFile(join(f.root, taskId, 'reserved-claim.lock')).catch(() => undefined), undefined);
+  } finally { await rm(f.root, { recursive: true, force: true }); }
+});

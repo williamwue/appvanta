@@ -2,7 +2,7 @@
 
 更新：2026-09-28。本文件汇总当前有界验收；阶段清单中的逐次记录作为带日期的历史证据，旧段落中的“待完成”应结合本文件及后续验收读取。最终目标仍是覆盖固定版本 Argent / ARTEMIS 的全部公开可验证功能，不因本轮收尾缩小范围。以下 39 项清单保持完整，1 项已完成、38 项仍待办。
 
-Current verification snapshot (2026-09-29): integration head 750c350 plus adjudicated continuation and claim-lock hardening; local full build/tests pass (core 88, Android 51, scripts 33). Hosted run 36498430004 passed Windows, Linux, macOS, and Android Emulator. Public main is 7560ad1. P0-03 now has a bounded reserved-successor execution path with guarded first wait, no reset, cross-process claim serialization, and source-run handoff evidence; real-device execution and crash-after-running recovery remain open. Real-device/OEM acceptance remains unavailable; emulator evidence only.
+Current verification snapshot (2026-09-29): integration head c8bd49d plus reserved-claim metadata-lock repair 6bf461d; local full build/tests pass (core 89, Android 51, scripts 33). Hosted run 36500238750 exposed a cross-platform adjudicated-fixture mismatch on Windows/macOS; the fixture is corrected locally and awaits rerun. Previous hosted run 36498430004 passed Windows, Linux, macOS, and Android Emulator. Public main is 2e8b3d4. P0-03 has a bounded reserved-successor execution path with guarded first wait, no reset, cross-process claim serialization, and source-run handoff evidence; real-device execution and crash-after-running recovery remain open. Real-device/OEM acceptance remains unavailable; emulator evidence only.
 
 ## 本轮已完成的范围
 
