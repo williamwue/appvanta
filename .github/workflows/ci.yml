@@ -160,6 +160,9 @@ jobs:
       - name: Verify compiled Flow template execution
         timeout-minutes: 3
         run: node scripts/verify-flow-template.mjs emulator-5554
+      - name: Verify application process condition errors
+        timeout-minutes: 2
+        run: node scripts/verify-process-condition.mjs emulator-5554
       - name: Verify real device screenshot SSIM gate
         timeout-minutes: 3
         run: node scripts/verify-device-visual.mjs emulator-5554

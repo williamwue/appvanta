@@ -282,8 +282,12 @@ export class AdbDriver implements DeviceDriver {
     this.signal?.throwIfAborted();
     if (condition.kind === 'app-running') {
       if (!/^[A-Za-z0-9_.]+$/.test(condition.packageName)) throw new Error('Invalid package name');
-      try { return !!(await this.run(['-s', deviceId, 'shell', 'pidof', condition.packageName])).trim(); }
-      catch (error) { if (error && typeof error === 'object' && 'code' in error && error.code === 1) return false; throw error; }
+      const command = `output=$(pidof ${condition.packageName} 2>&1); status=$?; printf '%s\\nAPPVANTA_PIDOF_STATUS=%s\\n' "$output" "$status"`;
+      const output = await this.run(['-s', deviceId, 'shell', command]);
+      const result = /^([^\r\n]*)\r?\nAPPVANTA_PIDOF_STATUS=(\d+)\r?\n$/.exec(output);
+      if (result?.[2] === '1' && result[1] === '') return false;
+      if (result?.[2] === '0' && /^[1-9]\d*(?:\s+[1-9]\d*)*$/.test(result[1]!)) return true;
+      throw new Error('Unverified application process query result');
     }
     if (condition.kind === 'ui-changed') {
       if (!baseline) throw new Error('ui-changed requires a baseline observation from wait');
