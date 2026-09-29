@@ -150,6 +150,9 @@ jobs:
         run: |
           node packages/cli/dist/index.js install emulator-5554 test-apps/markor.apk
           node packages/cli/dist/index.js run-flow emulator-5554 docs/examples/markor-ci-flow.json
+      - name: Verify observed environment state
+        timeout-minutes: 3
+        run: node scripts/verify-environment-state.mjs emulator-5554
       - name: Install network capture verifier dependencies
         timeout-minutes: 5
         shell: bash

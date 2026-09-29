@@ -37,6 +37,9 @@ mock.module('node:child_process', { namedExports: {
     if (changesProxy) proxyChanged = true;
     const output = args[0] === 'devices' ? 'List of devices attached\ndevice\tdevice model:fake\n'
       : args[0] === 'version' ? 'Android Debug Bridge version 1.0.41\n'
+      : args.at(-1) === "'am' 'get-current-user'" ? '0\n'
+      : args.at(-1) === "'settings' '--user' '0' 'get' 'secure' 'default_input_method'" ? 'app.ime/.Service\n'
+      : args.at(-1) === "'ime' 'list' '-s'" ? 'app.ime/.Service\n'
       : args.at(-1) === 'ro.product.model' ? 'fake\n'
       : args.at(-1) === 'ro.build.fingerprint' ? 'fake-build\n'
       : args.includes('screencap') ? Buffer.from('fake screenshot')
