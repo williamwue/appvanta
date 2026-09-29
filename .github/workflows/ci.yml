@@ -172,7 +172,7 @@ jobs:
         timeout-minutes: 5
         run: |
           node scripts/verify-adjudicated-input.mjs emulator-5554 unicode branch
-          node scripts/verify-adjudicated-input.mjs emulator-5554 unicode branch mcp
+          node scripts/verify-adjudicated-input.mjs emulator-5554 unicode nested mcp
       - name: Verify application accelerometer callbacks
         timeout-minutes: 4
         run: |

@@ -13,9 +13,10 @@ import { TaskStore, inspectDeviceLock, withDeviceLock, previewUncertainTaskStep,
   readAdjudicatedExecution } from '../packages/core/dist/index.js';
 
 const deviceId = process.argv[2];
-if (!deviceId || process.argv[3] && process.argv[3] !== 'unicode' || process.argv[4] && process.argv[4] !== 'branch' || process.argv[5] && process.argv[5] !== 'mcp') throw new Error('Usage: node scripts/verify-adjudicated-input.mjs <device> [unicode] [branch] [mcp]');
+if (!deviceId || process.argv[3] && process.argv[3] !== 'unicode' || process.argv[4] && !['branch', 'nested'].includes(process.argv[4]) || process.argv[5] && process.argv[5] !== 'mcp') throw new Error('Usage: node scripts/verify-adjudicated-input.mjs <device> [unicode] [branch|nested] [mcp]');
 const unicode = process.argv[3] === 'unicode';
-const branchMode = process.argv[4] === 'branch';
+const nested = process.argv[4] === 'nested';
+const branchMode = ['branch', 'nested'].includes(process.argv[4]);
 const mcp = process.argv[5] === 'mcp';
 const root = resolve(import.meta.dirname, '..');
 const directory = join(root, '.appvanta/runs', `adjudicated-input-${Date.now()}`);
@@ -27,7 +28,9 @@ const inputText = unicode ? `${marker} 中文 café\n特殊字符 ' " & < > %s ;
 const deviceFile = `/storage/emulated/0/Documents/markor/AppVantaNote${randomUUID().replaceAll('-', '')}.txt`;
 const original = 'Original standalone verification note.';
 const editor = { kind: 'resource-id', value: 'net.gsantner.markor:id/document__fragment__edit__highlighting_editor' };
-const branch = { key: 'initial_editor', when: { kind: 'target-visible', target: editor }, equals: true };
+const parentBranch = { key: 'editor_visible', when: { kind: 'target-visible', target: editor }, equals: true };
+const branch = { key: 'initial_editor', when: { kind: 'target-visible', target: nested ? { kind: 'text', value: original, match: 'exact' } : editor }, equals: true,
+  ...(nested ? { parents: [parentBranch] } : {}) };
 const driver = new AdbDriver({ artifactsDirectory: join(directory, 'observations') });
 const contents = () => adb('exec-out', 'cat', deviceFile);
 const imeState = async () => ({
@@ -95,6 +98,7 @@ try {
     await adb('shell', 'am', 'start', '-a', 'android.intent.action.VIEW', '-d', `file://${deviceFile}`, '-t', 'text/plain', '-n', 'net.gsantner.markor/.activity.DocumentActivity');
     await driver.execute(deviceId, { kind: 'wait', condition: { kind: 'target-visible', target: editor }, timeoutMs: 15000 });
     assert.equal(await contents(), original);
+    if (nested) assert.equal(await driver.checkCondition(deviceId, branch.when), true, 'Original exact text must match before input');
   });
   const source = await crashAtMessage(`
     import { TaskStore, parseFlow } from ${core};
@@ -105,6 +109,7 @@ try {
       { description: 'Input marker once', ...${JSON.stringify(branchMode ? { branch } : {})}, action: { kind: 'input', target: ${JSON.stringify(editor)}, text: ${JSON.stringify(inputText)} } },
       { description: 'Save edited note', ...${JSON.stringify(branchMode ? { branch } : {})}, action: { kind: 'tap', target: { kind: 'accessibility-label', value: 'Save' } } },
       ...${JSON.stringify(branchMode ? [{ description: 'Unselected alternative', branch: { ...branch, equals: false }, echo: 'must remain unselected' }] : [])},
+      ...${JSON.stringify(nested ? [{ description: 'Unselected outer alternative', branch: { ...parentBranch, equals: false }, echo: 'outer must remain unselected' }] : [])},
       { description: 'Final evidence', echo: 'continued without repeating input' }
     ] });
     const task = await store.create(${JSON.stringify(deviceId)}, flow); task.status = 'running'; await store.save(task);
@@ -137,12 +142,14 @@ try {
   assert.equal(preview.completedSteps, 1);
   if (branchMode) {
     assert.equal(preview.activeBranches.selected, true);
-    assert.equal(preview.activeBranches.choices.length, 1);
-    const choice = preview.activeBranches.choices[0];
-    const bytes = await readFile(join(preview.runDirectory, choice.path));
-    assert.equal(choice.sha256, createHash('sha256').update(bytes).digest('hex'));
-    assert.equal(choice.decision.source, 'observed');
-    assert.equal(choice.decision.matched, true);
+    assert.equal(preview.activeBranches.choices.length, nested ? 2 : 1);
+    for (const choice of preview.activeBranches.choices) {
+      const bytes = await readFile(join(preview.runDirectory, choice.path));
+      assert.equal(choice.sha256, createHash('sha256').update(bytes).digest('hex'));
+      assert.equal(choice.decision.source, 'observed');
+      assert.equal(choice.decision.matched, true);
+    }
+    if (nested) assert.equal(await driver.checkCondition(deviceId, branch.when), false, 'Input must change the original inner condition');
   }
   assert.equal(await observeWritten(), observed);
   const lease = await inspectDeviceLock(deviceId); assert.equal(lease.owner, 'dead');
@@ -155,8 +162,11 @@ try {
   const expectation = { decisionId: decision.id, previewDigestSha256: preview.previewDigestSha256, leaseToken: lease.lease.token };
   const preparation = await prepareAdjudicatedTaskContinuation(store, successor.taskId, expectation);
   if (branchMode) {
-    for (const step of preparation.claim.flow.steps.filter(step => step.branch)) assert.equal(step.branch.resolved, true);
-    assert.equal(preparation.claim.flow.steps.filter(step => step.branch).length, 2);
+    for (const step of preparation.claim.flow.steps.filter(step => step.branch)) {
+      assert.equal(step.branch.resolved, true);
+      for (const parent of step.branch.parents ?? []) assert.equal(parent.resolved, true);
+    }
+    assert.equal(preparation.claim.flow.steps.filter(step => step.branch).length, nested ? 3 : 2);
   }
   const receipt = { ...expectation, preparationId: preparation.claim.id, preparationDigestSha256: preparation.preparationDigestSha256 };
   const receiptPath = join(directory, 'receipt.json'); await writeFile(receiptPath, JSON.stringify(receipt));
@@ -179,6 +189,11 @@ try {
     assert(steps.some(step => step.description === 'Unselected alternative' && step.status === 'skipped'));
     const choice = JSON.parse(await readFile(join(result.runDirectory, 'branch-initial_editor.json'), 'utf8'));
     assert.equal(choice.source, 'resolved'); assert.equal(choice.matched, true);
+    if (nested) {
+      assert(steps.some(step => step.description === 'Unselected outer alternative' && step.status === 'skipped'));
+      const outer = JSON.parse(await readFile(join(result.runDirectory, 'branch-editor_visible.json'), 'utf8'));
+      assert.equal(outer.source, 'resolved'); assert.equal(outer.matched, true);
+    }
   }
   assert.equal(await contents(), observed, 'Adjudication must not repeat input');
   assert.deepEqual(await imeState(), imeBefore);
@@ -189,7 +204,7 @@ try {
     await adb('shell', 'rm', deviceFile);
     await storage.stop();
   });
-  const evidence = { status: 'passed', deviceId, deviceFile, unicode, branchMode, transport: mcp ? 'mcp' : 'cli', inputText, imeBefore, imeAfter: await imeState(), original, observed, sourceTaskId: source.taskId, interruptedTaskId: successor.taskId, result, lineage, ownedNoteRemoved: true,
+  const evidence = { status: 'passed', deviceId, deviceFile, unicode, branchMode, nested, ...(nested ? { innerConditionBeforeInput: true, innerConditionAfterInput: false } : {}), transport: mcp ? 'mcp' : 'cli', inputText, imeBefore, imeAfter: await imeState(), original, observed, sourceTaskId: source.taskId, interruptedTaskId: successor.taskId, result, lineage, ownedNoteRemoved: true,
     limitation: 'Verifier pauses after the real driver action returns, before Flow persists completion. Persisted note bytes and a live text-visible checkpoint verify the marker. Only this Markor input payload is covered; no concurrent external editor or crash inside the IME bridge is simulated.' };
   await writeFile(join(directory, 'verification.json'), JSON.stringify(evidence, null, 2));
   console.log(JSON.stringify({ status: 'passed', directory }));
