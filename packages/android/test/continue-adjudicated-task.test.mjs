@@ -13,7 +13,7 @@ const sha = value => createHash('sha256').update(JSON.stringify(value)).digest('
 const save = (path, value) => writeFile(path, JSON.stringify(value));
 
 async function executionFixture() {
-  const root = await mkdtemp(join(tmpdir(), 'appvanta-adjudicated-exec-'));
+  const root = await realpath(await mkdtemp(join(tmpdir(), 'appvanta-adjudicated-exec-')));
   const store = new TaskStore(join(root, 'tasks'));
   const flow = { version: 1, name: 'source', steps: [
     { description: 'uncertain', action: { kind: 'back' } },
@@ -216,7 +216,8 @@ for (const fault of ['live-owner', 'wrong-token', 'cleanup', 'binding', 'source-
       await assert.rejects(continueAdjudicatedAndroidTask(f.store, f.successor.id, f.receipt, {
         lockDirectory: join(f.root, 'locks'), transferRetryToken: fault === 'wrong-token' ? randomUUID() : lease.token,
         continueFlow: async () => { touched = true; throw new Error('Unexpected device recovery'); },
-      }), /unstarted|admitted work|binding intent|source lease evidence/i);
+      }), fault === 'binding' ? /binding intent/ : fault === 'source-copy' ? /source lease evidence/
+        : fault === 'pending' || fault === 'resolved-work' ? /admitted work/ : /not an unstarted/);
       assert.equal(touched, false);
       assert.equal(await readFile(f.lockPath, 'utf8'), before);
     } finally { await rm(f.root, { recursive: true, force: true }); }
