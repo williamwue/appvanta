@@ -1,5 +1,11 @@
 # 截图平移对齐
 
+## Android 实际截图验收
+
+`node scripts/verify-device-visual.mjs <device>` 在设备租约内打开系统设置首页，间隔采集两次，再打开显示设置采集第三张原始 PNG。它不修改设置值，但会把显示设置留在前台。顶部和底部各 5% 为显式遮罩，截图、UI 树、SHA-256、设备 API/型号/密度及测量结果保存在运行目录。
+
+该夹具预先指定 `minSsim: 0.99`，用 `maxMismatchRatio: 1` 单独检查 SSIM 门禁；这不是生产像素容差建议。API 37 本地证据 `.appvanta/runs/device-visual-1790706060569/verification.json` 中，同页重复截图得分约 1，通过；首页与显示设置得分约 0.679765，被拒绝。托管 API 35 已加入此命令，结果应以对应提交的 CI 为准。此验收不覆盖细微缺陷、人类感知校准、缩放旋转、多 DPI/主题或多设备基线。
+
 `comparePngScreenshots` 和 MCP `compare_screenshots` 接受 `maxAlignmentShift`，整数范围 0–16 像素，默认 0 表示不对齐。显式启用后，在指定范围内搜索二维平移；同分时优先位移较小的候选。图像尺寸必须一致，且搜索范围不能覆盖整个图像内部。
 
 CLI 示例（`-` 表示不提供遮罩文件）：
