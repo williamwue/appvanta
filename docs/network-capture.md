@@ -165,3 +165,28 @@ MCP 同步 Flow 使用同一验收器，加 `--mcp`：
 期限场景持续注入不可用错误，1 秒期限后拒绝继续，真实设备仍保留测试代理且日志没有 restored；解除注入后重新恢复原值。
 最终代理与原值相同，设备租约释放。证据：`.appvanta/runs/proxy-reconnect-1790701189151/verification.json`。
 传输错误在 ADB 回调边界注入；成功命令实际访问模拟器，未断开真实 ADB 连接，不作为 USB 拔插或主机重启的验收。
+
+同日增加 `node scripts/verify-proxy-reconnect.mjs emulator-5554 tcp` 并在 API 37 通过。
+此模式使用独立随机端口的本机 TCP 转发器连接已有 ADB 服务端，按场景断开并恢复该转发链路；不停止共享 ADB 服务端，也不操作其他设备。
+实际 `adb -H 127.0.0.1 -P <port>` 子进程返回退出码 1 和 `protocol fault ... connection reset`，未由 Python 回调直接伪造异常。
+重复断连时第三次尝试成功且恢复写入仅一次；持续断连时 1 秒期限耗尽后停止，随后重新连通并恢复原代理。
+证据：`.appvanta/runs/proxy-reconnect-1790701434793/verification.json`，包含实际命令参数、stderr、每次尝试及期限耗时。
+这覆盖 ADB 客户端到服务端的 TCP 中断；设备端传输、USB 拔插、采集期间断线及主机重启仍需分别验收。
+
+网络与采集组合的 TCP 中断验收（API 37）通过：
+`node scripts/verify-network-capture-recovery.mjs emulator-5554 tcp-disconnect`，mitmdump 路径仍由 `APPVANTA_MITMDUMP` 指定。
+录屏、Perfetto 与代理准备完成后强杀宿主及网络 Worker，再断开隔离 TCP 转发链路并调用真实恢复入口。
+ADB 连接错误使恢复失败；验收通过独立正常连接确认原租约、会话代理、两份远端采集文件和 PID 控制文件均保留，记录没有标记 cleaned。
+恢复同一 TCP 链路后，用原 token 再次清理成功，产物保存到本地并标注有效性未验证，远端文件移除、代理恢复、进程退出、租约释放。
+证据：`.appvanta/runs/network-capture-recovery-1790701606247/verification.json` 及 `disconnected-recovery.json`。
+此次断连发生在清理入口之前，不证明产物拉取中途断连、设备端传输或 USB 拔插；中断录像未作为完整有效录像验收。
+
+随后增加两个实际拉取中断场景：`tcp-pull-disconnect` 和 `tcp-pull-trace-disconnect`。
+隔离 TCP 转发器识别指定远端文件的 ADB sync 拉取请求，在 DATA 帧中只转发一个负载字节后结束连接，并拒绝后续连接。
+API 37 上录屏场景通过：拉取错误写入 `recovery-pull`，远端采集文件和控制文件保留，原租约及会话代理不变；重连后同 token 恢复成功。
+Perfetto 场景也通过：录屏已经恢复到本地并清理远端，trace 拉取失败时保留其远端文件和原租约；重连重试成功处理剩余采集与网络清理。
+两种场景最终均确认本地非空产物、远端文件移除、代理还原、相关进程退出和租约释放，产物有效性仍标为未验证。
+证据分别为 `.appvanta/runs/network-capture-recovery-1790702160056/verification.json` 和 `.appvanta/runs/network-capture-recovery-1790702245576/verification.json`。
+最终脚本的录屏场景复跑也通过，证据为 `.appvanta/runs/network-capture-recovery-1790702298388/verification.json`；脚本测试 36 项通过。
+首次尝试 `network-capture-recovery-1790701775686` 因验收脚本误读 `operation` 而非 `phase` 失败，记录保留；原 token 经正常恢复入口清理成功后才重跑。
+这覆盖主机 ADB 客户端到服务端链路中断，不证明设备端传输、USB 拔插或主机重启。
