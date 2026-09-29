@@ -5,6 +5,7 @@ import { mkdir, mkdtemp, readFile, rename, rm, stat, writeFile } from 'node:fs/p
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { promisify } from 'node:util';
+import { readMcpResponses } from './mcp-response-reader.mjs';
 
 const root = resolve('.');
 const workspace = await mkdtemp(join(tmpdir(), 'appvanta-release-'));
@@ -87,7 +88,14 @@ try {
     dependencies[`@appvanta/${name}`] = `file:${join(tarballs, packed.filename).replaceAll('\\', '/')}`;
   }
   await writeFile(join(workspace, 'package.json'), JSON.stringify({ name: 'appvanta-release-verification', private: true, dependencies }, null, 2));
+  const migrationSentinelPath = join(workspace, '.appvanta', 'tasks', 'legacy-record.json');
+  const migrationSentinel = JSON.stringify({ version: 0, state: 'preserve-unknown-record', payload: 'migration-boundary' }, null, 2) + '\n';
+  await mkdir(join(workspace, '.appvanta', 'tasks'), { recursive: true });
+  await writeFile(migrationSentinelPath, migrationSentinel, { flag: 'wx' });
   await runNpm(['install', '--ignore-scripts', '--no-audit', '--no-fund'], { cwd: workspace });
+  assert.equal(await readFile(migrationSentinelPath, 'utf8'), migrationSentinel, 'install must preserve unknown project records for migration');
+  await runNpm(['install', '--ignore-scripts', '--no-audit', '--no-fund'], { cwd: workspace });
+  assert.equal(await readFile(migrationSentinelPath, 'utf8'), migrationSentinel, 'reinstall must preserve project records');
 
   const cli = join(workspace, 'node_modules/@appvanta/cli/dist/index.js');
   const help = await run(process.execPath, [cli], { cwd: workspace });
@@ -98,21 +106,28 @@ try {
 
   const mcp = join(workspace, 'node_modules/@appvanta/mcp/dist/index.js');
   const child = mcpChild = spawn(process.execPath, [mcp], { cwd: workspace, env: { ...process.env, APPVANTA_PROJECT_ROOT: workspace }, stdio: ['pipe', 'pipe', 'pipe'], windowsHide: true });
-  let output = '';
-  child.stdout.setEncoding('utf8'); child.stdout.on('data', chunk => { output += chunk; });
+  const responses = readMcpResponses(child.stdout, [1, 2]);
   child.stdin.write(`${JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'initialize', params: { protocolVersion: '2025-06-18', capabilities: {}, clientInfo: { name: 'release-check', version: '1' } } })}\n`);
   child.stdin.write(`${JSON.stringify({ jsonrpc: '2.0', method: 'notifications/initialized' })}\n`);
   child.stdin.write(`${JSON.stringify({ jsonrpc: '2.0', id: 2, method: 'tools/list', params: {} })}\n`);
-  const deadline = Date.now() + 10000;
-  while (!output.split('\n').some(line => line.includes('"id":2'))) { if (Date.now() > deadline) throw new Error(`MCP timeout: ${output}`); await new Promise(done => setTimeout(done, 25)); }
-  const messages = output.trim().split('\n').map(JSON.parse);
+  const messages = await responses;
   assert(messages.find(message => message.id === 1)?.result?.serverInfo?.name);
   assert(messages.find(message => message.id === 2)?.result?.tools?.length > 10);
   await stopMcpChild(child);
   mcpChild = undefined;
 
   assert((await stat(join(workspace, 'node_modules/@appvanta/android/dist/runtime/capture-network.py'))).isFile());
-  const result = { status: 'passed', packages, doctor: doctorReport.verdict, tools: messages.find(message => message.id === 2).result.tools.length };
+  const packageNames = packages.map(name => `@appvanta/${name}`);
+  await runNpm(['uninstall', ...packageNames, '--ignore-scripts', '--no-audit', '--no-fund'], { cwd: workspace });
+  for (const name of packageNames) {
+    await assert.rejects(stat(join(workspace, 'node_modules', name)), { code: 'ENOENT' });
+  }
+  const afterUninstall = JSON.parse(await readFile(join(workspace, 'package.json'), 'utf8'));
+  assert.deepEqual(afterUninstall.dependencies ?? {}, {}, 'uninstall must remove all release dependencies');
+  assert.equal(await readFile(migrationSentinelPath, 'utf8'), migrationSentinel, 'uninstall must not delete project records');
+  const result = { status: 'passed', packages, doctor: doctorReport.verdict, tools: messages.find(message => message.id === 2).result.tools.length,
+    reinstall: 'passed', projectData: 'unknown-record-preserved', uninstall: 'dependencies-removed-records-preserved',
+    limitations: ['Cross-version upgrade and schema migration are not exercised by same-version reinstall'] };
   const outputDirectory = join(root, '.appvanta');
   await mkdir(outputDirectory, { recursive: true });
   await writeFile(join(outputDirectory, 'release-package-verification.json'), JSON.stringify(result, null, 2));

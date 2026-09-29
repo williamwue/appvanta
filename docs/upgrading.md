@@ -1,5 +1,7 @@
 # 安装、升级与卸载
 
+`npm run verify:release-packages` 在独立临时目录中安装四个 tarball、重复安装同一版本、运行 CLI help/doctor 和 MCP initialize/tools/list，再卸载四包。验证器检查卸载后的依赖目录与 package.json，并逐字节检查项目记录在安装、重装和卸载后保持不变。此项证明同版本重装与数据保留，不证明跨版本升级或记录模式迁移；后两项仍需使用明确的旧版本发行物与相应历史记录验收。
+
 AppVanta 当前处于 0.x 开发阶段，workspace 包仍保持 `private: true`。正式 npm 发布前，使用源码 checkout 和锁文件安装：
 
 ```text
