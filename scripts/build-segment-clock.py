@@ -1,4 +1,4 @@
-"""Offline, test-only Android visual clock build. Outputs stay under ignored .appvanta."""
+"""Offline Android test fixture builds. Outputs stay under ignored .appvanta."""
 import argparse
 import os
 from pathlib import Path
@@ -9,12 +9,13 @@ parser = argparse.ArgumentParser()
 parser.add_argument('--sdk', default=os.environ.get('ANDROID_HOME') or os.environ.get('ANDROID_SDK_ROOT'))
 parser.add_argument('--build-tools', default='35.0.0')
 parser.add_argument('--platform', default='android-35')
+parser.add_argument('--fixture', choices=['segment-clock', 'sensor-probe'], default='segment-clock')
 args = parser.parse_args()
 if not args.sdk:
     parser.error('--sdk or ANDROID_HOME is required')
 root = Path(__file__).resolve().parent.parent
-source = root / 'tools/segment-clock'
-output = root / '.appvanta/segment-clock'
+source = root / 'tools' / args.fixture
+output = root / '.appvanta' / args.fixture
 classes = output / 'classes'
 dex = output / 'dex'
 classes.mkdir(parents=True, exist_ok=True)
@@ -40,7 +41,7 @@ run(tool('zipalign'), '-f', '4', unsigned, aligned)
 key = output / 'debug.keystore'
 if not key.exists():
     run('keytool', '-genkeypair', '-keystore', key, '-storepass', 'android', '-keypass', 'android', '-alias', 'appvanta', '-dname', 'CN=AppVanta Local Segment Clock', '-keyalg', 'RSA', '-validity', '3650')
-apk = output / 'appvanta-segment-clock.apk'
+apk = output / ('appvanta-' + args.fixture + '.apk')
 run('java', '-jar', build / 'lib/apksigner.jar', 'sign', '--ks', key, '--ks-pass', 'pass:android', '--out', apk, aligned)
 run('java', '-jar', build / 'lib/apksigner.jar', 'verify', apk)
 print(apk)

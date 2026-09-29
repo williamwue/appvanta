@@ -8,4 +8,8 @@ Android Emulator 的 [sensor 控制台接口](https://developer.android.com/stud
 
 `node scripts/verify-emulator-shake.mjs emulator-5554` 的 API 37 证据位于 `.appvanta/runs/emulator-shake-1790707979799/verification.json`：正常六次读回通过；取消场景先观察到加速度改变，再发取消，最后原值恢复。此脚本使用独立租约且在恢复无法确认时保留租约。
 
-尚未完成：应用内 SensorEvent/摇动响应验证、Flow/MCP 动作及标准恢复入口接入、宿主强杀与设备断连恢复、外部冲突实测、多轴/多设备和真机/OEM。当前不得把控制台成功当作完整产品摇动能力已验收。
+应用回调补充：独立测试 APK `dev.appvanta.sensorprobe` 注册加速度传感器，将带会话 ID 的事件写到应用私有文件，经 `adb run-as` 读取。API 37 初次报告 `.appvanta/runs/sensor-events-1790708531028/verification.json` 包含 113 条实际事件，X 轴约为 -12 到 +12，原值恢复。最终脚本先停止探针再读取日志，保留 APK 摘要和原始事件；API 35 托管任务已接入，结果需绑定实际提交。
+
+尚未完成：任意应用摇动检测器响应、Flow/MCP 动作及标准恢复入口接入、宿主强杀与设备断连恢复、外部冲突实测、多轴/多设备和真机/OEM。当前不得把单一探针成功当作完整产品摇动能力已验收。
+
+最终脚本 API 37 复验：`sensor-events-1790708604781/verification.json`，105 条应用事件；40 项脚本测试通过。上述回调事件不依赖截图/OCR 或控制台读数推断，而来自测试应用的 `SensorEventListener`。

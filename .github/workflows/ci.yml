@@ -99,7 +99,7 @@ jobs:
           avdmanager="$ANDROID_SDK_ROOT/cmdline-tools/22.0/bin/avdmanager"
           test -x "$sdkmanager" && test -x "$avdmanager"
           "$sdkmanager" --sdk_root="$ANDROID_SDK_ROOT" \
-            "platform-tools" "emulator" "platforms;android-35" \
+            "platform-tools" "emulator" "platforms;android-35" "build-tools;35.0.0" \
             "system-images;android-35;google_apis;x86_64"
           printf 'no\n' | "$avdmanager" create avd --force --name appvanta-ci \
             --package "system-images;android-35;google_apis;x86_64" --device pixel_6
@@ -163,6 +163,11 @@ jobs:
       - name: Verify application process condition errors
         timeout-minutes: 2
         run: node scripts/verify-process-condition.mjs emulator-5554
+      - name: Verify application accelerometer callbacks
+        timeout-minutes: 4
+        run: |
+          python scripts/build-segment-clock.py --fixture sensor-probe
+          node scripts/verify-sensor-events.mjs emulator-5554
       - name: Verify real device screenshot SSIM gate
         timeout-minutes: 3
         run: node scripts/verify-device-visual.mjs emulator-5554
