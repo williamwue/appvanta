@@ -1,9 +1,11 @@
 import assert from 'node:assert/strict';
-import { mkdir, writeFile } from 'node:fs/promises';
+import { mkdir, writeFile, readFile, access } from 'node:fs/promises';
+import { execFile } from 'node:child_process';
+import { promisify } from 'node:util';
 import { resolve, join } from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
 import { bindDeviceLockRun, withDeviceLock, retainDeviceLockForCleanup } from '../packages/core/dist/index.js';
-import { readEmulatorAcceleration, shakeEmulator } from '../packages/android/dist/emulator-sensors.js';
+import { accelerationSequence, readEmulatorAcceleration, restoreEmulatorShake, shakeEmulator } from '../packages/android/dist/emulator-sensors.js';
 
 const device = process.argv[2]; assert(device, 'Emulator serial required');
 const root = resolve('.appvanta/runs', `emulator-shake-${Date.now()}`);
@@ -33,7 +35,34 @@ const result = await withDeviceLock(device, async () => {
     assert(cancelled.error, 'Shake must reject cancellation');
     const restored = await readEmulatorAcceleration('adb', device);
     assert(close(restored, original));
-    return { original, normal, duringCancellation: during, restored, cancellation: String(cancelled.error) };
+    // This fixture owns both the injected conflict and its final cleanup under one lease.
+    const conflictPath = join(root, 'external-conflict.json');
+    const options = { axis: 'x', amplitude: 12, cycles: 1, intervalMs: 100 };
+    const conflictRecord = JSON.stringify({ version: 1, device, original, sequence: accelerationSequence(original, options), options });
+    await writeFile(conflictPath, conflictRecord, { flag: 'wx' });
+    const external = [...original]; external[0] += 3;
+    const exec = promisify(execFile);
+    let observedConflict, conflictError;
+    try {
+      const update = await exec('adb', ['-s', device, 'emu', 'sensor', 'set', 'acceleration', external.join(':')], { timeout: 10000, windowsHide: true });
+      assert.equal(update.stdout.trim(), 'OK');
+      observedConflict = await readEmulatorAcceleration('adb', device);
+      assert(close(observedConflict, external));
+      await assert.rejects(restoreEmulatorShake('adb', device, conflictPath), error => {
+        conflictError = String(error);
+        return /changed externally/.test(conflictError);
+      });
+      assert(close(await readEmulatorAcceleration('adb', device), external), 'Recovery must preserve the external value');
+      assert.equal(await readFile(conflictPath, 'utf8'), conflictRecord, 'Recovery must retain the original record');
+      await assert.rejects(access(`${conflictPath}.restored.json`), { code: 'ENOENT' });
+    } finally {
+      const current = await readEmulatorAcceleration('adb', device);
+      assert(close(current, external) || close(current, original), 'Fixture cleanup refuses an unrelated acceleration value');
+      const cleanup = await exec('adb', ['-s', device, 'emu', 'sensor', 'set', 'acceleration', original.join(':')], { timeout: 10000, windowsHide: true });
+      assert.equal(cleanup.stdout.trim(), 'OK');
+      assert(close(await readEmulatorAcceleration('adb', device), original));
+    }
+    return { original, normal, duringCancellation: during, restored, cancellation: String(cancelled.error), conflict: { recordPath: conflictPath, observed: observedConflict, error: conflictError, preserved: true, fixtureCleanupVerified: true } };
   } catch (error) {
     try { assert(close(await readEmulatorAcceleration('adb', device), original)); }
     catch { await retainDeviceLockForCleanup(device, root); }
