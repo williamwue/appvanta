@@ -1,5 +1,6 @@
 import { captureArtifact } from './capture.js';
 import { textShareArguments } from './text-share.js';
+import { fileShareArguments } from './file-share.js';
 import { shakeEmulator } from './emulator-sensors.js';
 import { matchAnrStack } from './anr-stacks.js';
 import { parseRuntimeIncidents } from './runtime-diagnostics.js';
@@ -219,6 +220,11 @@ export class AdbDriver implements DeviceDriver {
       case 'share-text': {
         const output = await this.run(['-s', deviceId, ...textShareArguments(action)]);
         if (/Error:|Exception|Status:\s*(?!ok\b)\S+/i.test(output)) throw new Error(`Text share failed: ${output.trim()}`);
+        break;
+      }
+      case 'share-file': {
+        const output = await this.run(['-s', deviceId, ...fileShareArguments(action)]);
+        if (/Error:|Exception|Status:\s*(?!ok\b)\S+/i.test(output)) throw new Error(`Attachment share failed: ${output.trim()}`);
         break;
       }
       case 'paste': {

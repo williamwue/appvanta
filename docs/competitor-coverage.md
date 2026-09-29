@@ -18,7 +18,7 @@
 | 运行时权限准备、原值恢复与审计 | 两者 | partial | API 37 已通过权限准备、成功/失败/取消恢复与强杀后冲突保护、重试；真机及多用户待验收 | 阶段 5 |
 | 首次启动状态与应用数据重置 | 两者 | partial | API 37 / Markor 已通过专属目录标记清除、引导页出现及审计；真机、更多应用与系统/云端状态边界待验证 | 阶段 5 |
 | 元素等待和 UI 变化等待 | Argent | partial | 文本/目标/进程/UI 树变化及连续截图稳定等待已实现；screen-stable API 37 成功/超时及失败证据通过，容差/动态区域屏蔽已验收，更多设备待完成 | 阶段 4 |
-| 跨应用端到端任务 | ARTEMIS | partial | API 37 Settings → Markor 剪贴板流程及原生文本分享、文件原文和权限恢复已验收；附件分享、系统选择器、更多组合与真机待完成 | 阶段 4 |
+| 跨应用端到端任务 | ARTEMIS | partial | API 37 Settings → Markor 剪贴板流程及原生文本分享、文件原文和权限恢复已验收；已有 content URI 的单附件 CLI/MCP 只读投递与撤销已有双应用证据；本地文件托管、系统选择器、更多组合与真机待完成，见 file-sharing.md | 阶段 4 |
 | Observe → Act → Verify 循环 | ARTEMIS | partial | Flow 每步观察和检查已实现；探索动作选择仍由外部 Agent 完成 | 阶段 4 |
 | Flash 式快速反应执行 | ARTEMIS | partial | MCP 原子工具与 Flow 可供 Agent 调用；无等价内置模型循环 | 阶段 4/5 |
 | Pro 式计划、检查点、Checker、恢复 | ARTEMIS | partial | 检查点、有限恢复、证据报告已有；Planner/Checker 由 MCP 客户端 Agent 承担 | 阶段 4/5 |

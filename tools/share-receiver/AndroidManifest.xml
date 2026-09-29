@@ -1,0 +1,9 @@
+<manifest xmlns:android="http://schemas.android.com/apk/res/android" package="dev.appvanta.share.receiver" android:versionCode="1" android:versionName="0.1">
+  <uses-sdk android:minSdkVersion="26" android:targetSdkVersion="35" />
+  <queries><provider android:authorities="dev.appvanta.share.source" /></queries>
+  <application android:label="AppVanta Share Receiver" android:debuggable="true" android:allowBackup="false">
+    <activity android:name=".ReceiveActivity" android:exported="true">
+      <intent-filter><action android:name="android.intent.action.SEND" /><category android:name="android.intent.category.DEFAULT" /><data android:mimeType="*/*" /></intent-filter>
+    </activity>
+  </application>
+</manifest>

@@ -11,6 +11,7 @@ test('MCP publishes executable schemas and rejects invalid calls before acquirin
   const root = await mkdtemp(join(tmpdir(), 'appvanta-schema-'));
   try {
     const cases = [
+      ...[{ uri: 'file:///sdcard/a' }, { mimeType: '*/*' }, { unknown: true }].map(patch => ['execute_action', { deviceId: 'emulator-5554', action: { kind: 'share-file', uri: 'content://app.files/a', mimeType: 'application/octet-stream', ...patch } }]),
       ...[
         { extract: { name: 'x', target: { kind: 'image-template', path: 'x.png' }, attribute: 'text' } },
         { extract: { name: 'x', target: { kind: 'text', value: 'x' }, attribute: 'text' }, action: { kind: 'back' } },

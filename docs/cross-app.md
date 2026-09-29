@@ -14,4 +14,4 @@ Flow 和 MCP execute_action 支持 `{ "kind": "share-text", "text": "中文内�
 
 `node scripts/verify-text-share.mjs emulator-5554` 已验证 Markor 接收中文、emoji、多行、单双引号、字面 shell 表达式及 `%s`，选择 QuickNote 后拉取文件校验原文与唯一出现次数；不存在的目标包导致 Flow 失败且后续步骤未执行。临时存储 AppOps 由 Flow 恢复，设备读回为 default。证据：`.appvanta/runs/text-share-1790427425340/verification.json`。
 
-此脚本向现有 QuickNote 追加唯一测试文本，不删除原内容。当前未覆盖附件分享、系统选择器、标题接收语义、其他接收应用或真机。
+此脚本向现有 QuickNote 追加唯一测试文本，不删除原内容。附件 content URI 的只读投递另有独立双应用 CLI/MCP 验收，见 [附件分享](file-sharing.md)。本脚本仍未覆盖系统选择器、标题接收语义、其他接收应用或真机。

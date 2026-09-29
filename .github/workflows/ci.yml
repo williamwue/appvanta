@@ -178,6 +178,12 @@ jobs:
       - name: Verify extracted values and crash continuation
         timeout-minutes: 5
         run: node scripts/verify-flow-values.mjs emulator-5554
+      - name: Verify read-only attachment sharing
+        timeout-minutes: 4
+        run: |
+          python scripts/build-segment-clock.py --fixture share-source
+          python scripts/build-segment-clock.py --fixture share-receiver
+          node scripts/verify-file-share.mjs emulator-5554
       - name: Verify application accelerometer callbacks
         timeout-minutes: 4
         run: |

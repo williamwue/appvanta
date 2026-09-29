@@ -131,6 +131,15 @@ export function parseAction(value: unknown): Action {
       if (Buffer.byteLength(a.text, 'utf8') > 24000 || a.text.includes('\0')) throw new Error('Clipboard text must be valid Unicode without NUL, at most 24000 UTF-8 bytes');
       return { kind: a.kind, text: a.text };
     case 'paste': keys(a, ['kind', 'target']); return { kind: a.kind, target: parseTarget(a.target) };
+    case 'share-file': {
+      keys(a, ['kind', 'uri', 'mimeType', 'packageName']);
+      const uri = text(a.uri), mimeType = text(a.mimeType);
+      if (uri.length > 4096 || /[\s\x00-\x1f\x7f]/u.test(uri) || !/^content:\/\/[A-Za-z0-9_.-]+\//.test(uri)) throw new Error('Attachment requires a content URI with authority and path');
+      const parsed = new URL(uri);
+      if (parsed.protocol !== 'content:' || parsed.username || parsed.password || parsed.port || parsed.hash || !parsed.hostname) throw new Error('Invalid attachment URI');
+      if (!/^[A-Za-z0-9][A-Za-z0-9!#$&^_.+-]*\/[A-Za-z0-9][A-Za-z0-9!#$&^_.+-]*$/.test(mimeType) || mimeType.length > 127) throw new Error('Attachment requires an explicit MIME type');
+      return { kind: a.kind, uri, mimeType, ...(a.packageName !== undefined ? { packageName: packageName(a.packageName) } : {}) };
+    }
     case 'share-text': {
       keys(a, ['kind', 'text', 'subject', 'packageName']);
       const shared = text(a.text);
