@@ -1,4 +1,4 @@
-import { mkdir, readFile, realpath, writeFile } from 'node:fs/promises';
+import { mkdir, readFile, realpath, writeFile, lstat } from 'node:fs/promises';
 import { join } from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { homedir } from 'node:os';
@@ -161,8 +161,13 @@ async function recoverAndroidState(deviceId: string, lease: Readonly<DeviceLease
     const audit = new AuditLog(join(root, 'audit.jsonl'));
     const steps: { fixture: string; status: string; error?: string }[] = [];
     const save = () => writeFile(join(directory, `${attempt}.json`), JSON.stringify({ version: 1, deviceId, token: lease.token, scope: 'environment-cleanup', steps }, null, 2));
+    const sensorDirectory = join(root, 'fixtures', 'emulator-sensors');
+    const hasSensorRecords = await lstat(sensorDirectory).then(() => true, (error: NodeJS.ErrnoException) => {
+      if (error.code === 'ENOENT') return false;
+      throw error;
+    });
     const jobs: [string, boolean, () => Promise<void>][] = [
-      ['emulator-sensors', true, () => recoverEmulatorShakes('adb', deviceId, join(root, 'fixtures', 'emulator-sensors'))],
+      ['emulator-sensors', hasSensorRecords, () => recoverEmulatorShakes('adb', deviceId, sensorDirectory)],
       ['capture', !!flow.capture, async () => { await recoverCaptures('adb', deviceId, root); }],
       ['network', !!flow.network, async () => { await recoverNetworkSession('adb', deviceId, root); }],
       ['appops', !!flow.appOps, () => recoverAppOps(deviceId, root)],

@@ -158,6 +158,7 @@ if (scenario === 'nested-unsafe' || scenario === 'marker-upgrade-denied' || scen
 } else {
   const recovered = await recoverAndroidFlow('device', state.lease.token);
   assert.equal(recovered.scope, 'environment-cleanup');
+  assert.deepEqual(recovered.steps, [], 'Runs without fixtures must not report a sensor restoration');
   assert.equal(await inspectDeviceLock('device', locks), null);
   assert.equal(calls.length, beforeRecovery + 3, 'verified Flow recovery checks connected device identity');
   assert.equal(proxyChanged, false);

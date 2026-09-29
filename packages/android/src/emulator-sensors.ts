@@ -1,7 +1,7 @@
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { createHash, randomUUID } from 'node:crypto';
-import { mkdir, open, readFile, readdir } from 'node:fs/promises';
+import { mkdir, open, readFile, readdir, lstat } from 'node:fs/promises';
 import { join } from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
 
@@ -74,7 +74,10 @@ export async function restoreEmulatorShake(adb: string, device: string, recordPa
 /** Caller must hold the device lease for the entire operation and recovery. */
 export async function recoverEmulatorShakes(adb: string, device: string, directory: string): Promise<void> {
   let entries;
-  try { entries = await readdir(directory, { withFileTypes: true }); }
+  try {
+    if (!(await lstat(directory)).isDirectory()) throw new Error('Emulator sensor recovery evidence must be a directory');
+    entries = await readdir(directory, { withFileTypes: true });
+  }
   catch (error) { if ((error as NodeJS.ErrnoException).code === 'ENOENT') return; throw error; }
   const pattern = /^shake-\d+-[a-f0-9-]{36}\.json$/;
   for (const entry of entries) {

@@ -27,7 +27,10 @@ try {
   const bytes = JSON.stringify(record);
   await writeFile(path, bytes);
   const receipt = JSON.stringify({ version: 1, device, sourceSha256: createHash('sha256').update(bytes).digest('hex'), restored: original, restoredAt: new Date().toISOString() });
-  if (scenario === 'orphan-receipt' || scenario === 'unexpected-file') {
+  if (scenario === 'invalid-directory') {
+    await assert.rejects(recoverEmulatorShakes('adb', device, path), /must be a directory/);
+    assert.equal(calls.length, 0);
+  } else if (scenario === 'orphan-receipt' || scenario === 'unexpected-file') {
     await writeFile(join(root, scenario === 'orphan-receipt' ? 'shake-2-00000000-0000-0000-0000-000000000000.json.restored.json' : 'unexpected.txt'), receipt);
     await assert.rejects(recoverEmulatorShakes('adb', device, root), /Orphan|Unrecognized/);
     assert.equal(calls.length, 0);
