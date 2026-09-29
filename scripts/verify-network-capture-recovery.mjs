@@ -64,7 +64,10 @@ try {
     } else relay.setOffline(true);
     let failure;
     try { await recoverViaRelay(); assert.fail('Offline recovery unexpectedly succeeded'); }
-    catch (error) { assert.match(String(error), pullDisconnect ? /Environment recovery incomplete/ : /connection reset|protocol fault/i); failure = String(error); }
+    catch (error) {
+      await writeFile(join(root, 'first-recovery-failure.json'), JSON.stringify({ error: String(error), stdout: error.stdout, stderr: error.stderr, relay: relay.diagnostics, interruptedPull: relay.interruptedPull }, null, 2));
+      assert.match(String(error), pullDisconnect ? /Environment recovery incomplete/ : /connection reset|protocol fault/i); failure = String(error);
+    }
     if (pullDisconnect) assert(relay.interruptedPull?.deliveredPayloadBytes === 1, 'Expected an interrupted DATA frame');
     assert.deepEqual((await inspectDeviceLock(device)).lease, state.lease);
     assert.equal(adb('shell', 'settings', 'get', 'global', 'http_proxy'), network.sessionProxy);

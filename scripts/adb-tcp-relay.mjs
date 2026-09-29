@@ -2,11 +2,16 @@ import { createServer, connect } from 'node:net';
 
 export async function createAdbTcpRelay(upstreamPort = 5037) {
   const sockets = new Set();
+  const connections = [];
   let offline = false;
   let pullTargets, interruptedPull;
   const relay = createServer(client => {
     if (offline) { client.destroy(); return; }
     const server = connect({ host: '127.0.0.1', port: upstreamPort });
+    const diagnostic = { receivedBytes: 0, responsePrefixHex: '', target: null, closed: false };
+    if (connections.length < 256) connections.push(diagnostic);
+    server.on('error', error => { diagnostic.error = String(error); });
+    server.on('close', () => { diagnostic.closed = true; });
     for (const socket of [client, server]) {
       sockets.add(socket); socket.on('close', () => sockets.delete(socket));
     }
@@ -20,11 +25,14 @@ export async function createAdbTcpRelay(upstreamPort = 5037) {
       request = Buffer.concat([request, chunk]).subarray(-65536);
       if (request.includes(Buffer.from('RECV')) || request.includes(Buffer.from('RCV2'))) {
         target = pullTargets.find(path => request.includes(Buffer.from(path)));
+        if (target) diagnostic.target = target;
       }
     });
     client.pipe(server);
     client.on('drain', () => server.resume());
     server.on('data', chunk => {
+      diagnostic.receivedBytes += chunk.length;
+      if (diagnostic.responsePrefixHex.length < 64) diagnostic.responsePrefixHex += chunk.subarray(0, (64 - diagnostic.responsePrefixHex.length) / 2).toString('hex');
       if (target && !interruptedPull) {
         response = Buffer.concat([response, chunk]);
         const data = response.indexOf(Buffer.from('DATA'));
@@ -55,6 +63,7 @@ export async function createAdbTcpRelay(upstreamPort = 5037) {
     setOffline(value) { offline = value; if (offline) for (const socket of sockets) socket.destroy(); },
     interruptNextPull(paths) { pullTargets = [...paths]; interruptedPull = undefined; },
     get interruptedPull() { return interruptedPull; },
+    get diagnostics() { return connections.map(connection => ({ ...connection })); },
     async close() { for (const socket of sockets) socket.destroy(); await new Promise(done => relay.close(done)); },
   };
 }

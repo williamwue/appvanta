@@ -21,6 +21,9 @@ test('targeted pull forwards a DONE response when there is no DATA frame', async
     client.write(Buffer.from('RECV/sdcard/empty.mp4'));
     assert.deepEqual((await received)[0], done);
     assert.equal(relay.interruptedPull, undefined);
+    assert.equal(relay.diagnostics[0].target, '/sdcard/empty.mp4');
+    assert.equal(relay.diagnostics[0].receivedBytes, done.length);
+    assert.equal(relay.diagnostics[0].responsePrefixHex, done.toString('hex'));
   } finally {
     client.destroy(); await relay.close();
     for (const socket of sockets) socket.destroy();
