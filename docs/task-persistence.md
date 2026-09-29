@@ -20,13 +20,13 @@ node packages/cli/dist/index.js cancel-task <task-id>
 
 对于 queued/running/pausing/paused/cancelling 任务，查询检查本机 Worker PID。只有 OS 明确返回进程不存在时，才派生 `interrupted` 状态；不修改原始快照。访问被拒绝、远程主机或 PID 仍存在均不推断死亡。PID 复用可能使查询暂时保守地保留原状态。
 
-`interrupted` 不等于可以继续执行：Worker 自身崩溃、宿主重启或强制终止后，旧代理、ADB 子进程和设备锁可能尚未恢复。当前不自动重放动作；应先使用统一恢复协调器处理环境和设备锁。显式断点续跑只覆盖下文有界场景；不确定业务动作的人工裁决、重启后的安全续跑及远程 Worker 仍待完成。
+`interrupted` 不等于可以继续执行：Worker 自身崩溃、宿主重启或强制终止后，旧代理、ADB 子进程和设备锁可能尚未恢复。当前不自动重放动作；应先使用统一恢复协调器处理环境和设备锁。显式断点续跑和不确定动作裁决已有下文及 [裁决验收](adjudication-cli.md) 所列模拟器证据；任意业务动作、宿主重启后的完整恢复及远程 Worker 仍待完成。
 
 统一 Flow 执行器现在保存 `progress.json`：包含 Flow 哈希、设备 ID、递增 revision、已通过步骤及其原始索引、当前步骤和剩余队列；注入步骤保留 instruction ID。快照先写临时文件并同步文件内容，再原子重命名。阶段为 setup、boundary、executing、finalizing、finished。执行动作前保存 executing；仅在检查点和步骤采集结束标记通过后推进完成列表。完成报告后才写 finished。进度保存异常不会跳过既有资源清理。
 
 真实 Node 子进程强杀测试覆盖第二步边界与第二步动作中断，确认第一步保留为已通过、第二步保留为 active、第三步仍在 pending。此证据只证明进程中断时的快照，不保证断电持久性。后续显式续跑入口已使用该快照并另行校验原 Flow 和证据、协调设备资源、复验应用检查点及已领取指令；不能直接根据 boundary 自动重放。
 
-`node packages/cli/dist/index.js inspect-flow-progress <run-directory>` 提供只读一致性检查：核对 Flow 哈希、设备 ID、已完成记录与 `steps.jsonl`、原步骤顺序及完整性。非 boundary 阶段、步骤日志领先于快照、存在尚需指令存储核对的注入步骤均返回 `boundaryConsistent: false` 和非零退出码；损坏或缺失记录直接报错。即使边界一致也始终返回 `resumeAuthorized: false`，因为尚未检查设备所有权、资源恢复、证据文件完整性与实时检查点。旧运行没有 progress.json 时不能推断可续跑。
+`node packages/cli/dist/index.js inspect-flow-progress <run-directory>` 提供只读一致性检查：核对 Flow 哈希、设备 ID、已完成记录与 `steps.jsonl`、原步骤顺序及完整性。非 boundary 阶段、步骤日志领先于快照、存在尚需指令存储核对的注入步骤均返回 `boundaryConsistent: false` 和非零退出码；损坏或缺失记录直接报错。即使边界一致也始终返回 `resumeAuthorized: false`，因为设备所有权、资源恢复与实时检查点仍须由执行入口检查；此诊断已校验已完成步骤引用的证据完整性。旧运行没有 progress.json 时不能推断可续跑。
 
 已通过步骤现在记录所引用证据文件的 SHA-256 与字节数。检查器拒绝缺失、内容改变、相对路径越界或解析后越出运行目录的链接。只有 `recovery.jsonl` 允许后续追加：校验该步骤完成时的原长度前缀；修改或截断前缀仍失败。该校验覆盖已通过步骤的引用文件，不覆盖整包证据、任务指令存储，也不提供防恶意重写整个快照的签名保证。
 
@@ -88,4 +88,8 @@ API 37 实际环境恢复、租约转移后强杀及显式释放通过：`.appva
 
 返回 ready 后使用 `cancel_task` 管理后继任务，原 MCP 正常退出不取消独立 Worker。自动测试覆盖预取消不触及源任务、运行中持久取消检测和真实 Worker 子进程启动前取消。API 37 实测在续跑认领后取消，环境恢复结束后、租约转移前响应取消，原始绑定租约保留、无 ready/后继任务，显式 recover-flow 成功释放：`.appvanta/runs/startup-cancel-1790427732889/verification.json`。可用 `node scripts/verify-continuation-startup-cancel.mjs emulator-5554` 复验。
 
-API 37 租约转移前取消后的重新认领通过：`.appvanta/runs/startup-cancel-1790428441053/verification.json`。命令 `node scripts/verify-continuation-startup-cancel.mjs emulator-5554 retry` 验证旧 Worker 退出、原认领归档、使用原租约续跑、检查点与唯一剩余动作执行，已完成 Home 不重放。原任务历史保留。后继任务创建后的重试、带网络/采集夹具的恢复途中取消及不确定业务动作仍待完成。
+API 37 租约转移前取消后的重新认领通过：`.appvanta/runs/startup-cancel-1790428441053/verification.json`。命令 `node scripts/verify-continuation-startup-cancel.mjs emulator-5554 retry` 验证旧 Worker 退出、原认领归档、使用原租约续跑、检查点与唯一剩余动作执行，已完成 Home 不重放。原任务历史保留。此段为早期验收边界。后续已补连续未绑定转移重试、指定夹具恢复途中取消及 Markor 输入副作用裁决；证据和剩余限制分别见 [裁决验收](adjudication-cli.md) 与 [网络采集](network-capture.md)。不能据此推广到全部夹具或任意业务动作。
+
+## 分支与动态值的持久性
+
+已完成步骤包括 passed 和 skipped。分支决定、条件结果及提取值均与步骤和证据摘要核对。续跑固定已验证分支及字符串值，不因当前界面变化重新选择或重新提取；尚未完成的提取不能通过跳过裁决补造值。API 37 已验证提取后、输入前强杀的 CLI 续跑，CLI/MCP 正常读写也通过，见 [动态文本值](flow-values.md)。读取中和仅值文件落盘后的拒绝路径有真实宿主进程强杀测试，使用测试 Driver，尚无对应设备中断验收。

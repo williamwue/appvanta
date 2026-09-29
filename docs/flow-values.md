@@ -38,3 +38,5 @@
 验证入口：`node scripts/verify-flow-values.mjs <device>`。它在独立 Markor 文件中分别通过 CLI、MCP 和真实宿主强杀后的 CLI 续跑执行，核对完整文件、实际输入记录、进度、输入法和 AppOps 恢复。真实设备/OEM、多用户、WebView 和其他编辑器仍需各自验收。当前只提供字符串提取及输入引用；数值转换、正则捕获、任意字段引用和循环尚未实现。
 
 API 37 本地上述三条路径均通过，证据：`.appvanta/runs/flow-values-1790714385578/verification.json`；`crash-source.json` 保存中断来源及遗留租约。构建及完整 253 项回归通过（core 125、Android 88、脚本 40），之后补充的容量边界通过 core 值测试 4 项复验。托管 API 35 验收已接入，结果须以对应修订运行记录为准。
+
+补充中断回归：`node --test packages/core/test/flow-values.test.mjs` 的 6 项测试通过，新增两个实际子进程强杀点：提取器尚未返回，以及值文件已同步保存但完成步骤尚未记录。两种情况都保持 executing、已完成数为 0；普通续跑及跳过裁决被拒绝，原进度字节不变。后者即使存在有效值文件，也不能单凭文件存在承认提取完成。这两项使用测试 Driver，不替代 Android 设备上的同位置中断验收。

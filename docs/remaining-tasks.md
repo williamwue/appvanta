@@ -16,7 +16,7 @@ API 37 / Android 17 已验证裁决后步骤边界再次崩溃、只读等待执
 
 本轮分支裁决修订：构建及完整回归 248 项通过（core 121、Android 87、脚本 40），包含测试 Driver 下首次分支动作执行中强杀后的证据固定、缺失拒绝及裁决准备的字节变更拒绝。日志位于集成工作区 `.appvanta/active-branch-build.log` 和 `.appvanta/active-branch-full-tests.log`；后续 API 37 Markor Unicode 输入的分支裁决已通过 CLI/MCP 预约及执行验证，详见 flow-templates.md；该场景不等于任意分支或应用均已验收。
 
-当前已确认托管通过的是公开快照 `16c9288`（本地 `d99d759`），[运行 36623624410](https://github.com/williamwue/appvanta/actions/runs/36623624410) 的三系统任务及 API 35 模拟器任务均成功，含嵌套分支；本轮未下载核验该运行的归档。该结果不代表后续分支裁决修订。
+当前已确认托管通过的是公开快照 `c0399c9`（本地 `496196c`），[运行 36627292671](https://github.com/williamwue/appvanta/actions/runs/36627292671) 的三系统任务及 API 35 模拟器任务均成功，含安装 Unicode 输入 helper 后的单层 CLI 和嵌套 MCP 裁决。此次确认任务结果，未下载该成功运行的归档。后续动态值快照 `a968c30` 的运行 `36628200065` 尚在进行；本地构建及 253 项完整回归、API 37 CLI/MCP 和值提取后强杀续跑已通过，详见 flow-values.md。
 
 ## 本轮已完成的范围
 
@@ -62,6 +62,10 @@ API 37 / Android 17 已验证裁决后步骤边界再次崩溃、只读等待执
 - 2026-09-26 API 35 SDK 镜像首次安装曾因 `Error reading Zip content from a SeekableByteChannel` 失败；随后 r9 安装和 API 35 AVD boot 通过。先前失败是历史记录，不再是当前阻塞项。
 - `8825da3` 的本地 `verify:release-packages` 四包检查退出 0，`doctor` 为 ready，MCP 列出 49 个工具；同修订的 API 37 Markor CLI 单步冒烟通过，`cleanupFailed: false`，事后 `inspectDeviceLock` 为 null。单次模拟器冒烟不等于托管 CI、跨平台或真机验收。
 - `8825da3` 的 API 37 实际录屏及 Perfetto 取消验收通过：两类记录均为已取消且已清理；这仅覆盖该次模拟器取消路径，不覆盖 P0-04 的全部故障组合。
+### 早期集成与首次公开发布记录
+
+以下段落描述当时状态，不代表当前实现或最新 CI。
+
 - 集成修订 `32f9d56` 的录屏传输修复已独立复核，全部包构建及 `npm test` 通过；集成修订 `de1541a` 的不可变准备读取/原始字节摘要边界通过全部包构建及完整 core 52 项测试。租约守卫 `f8d7492` 经独立复核未发现问题（42 项聚焦回归），已在 `8825da3` 集成并保留已复核的录屏实现；该集成修订的 `npm run build` 和 `npm test` 均通过。严格裁决租约快照修复 `908a74e` 经独立复核未发现问题，已在 `0b4cff7` 集成；该修订全部包构建及完整 core 74 项测试通过。它严格接受有效版本 1/2 租约及精确的可选 `processToken`、`cleanupRequired` 字段，记录/准备/读取测试覆盖真实子进程退出后遗留的版本 2 租约，并维持 `resumeAuthorized: false`。可运行的受保护检查点与后继任务续跑仍未完成。各次数量绑定其修订，不推算最新统一全套测试数。公开仓库 <https://github.com/williamwue/appvanta> 已发布实验性源码快照：`main` 的初始提交 [`93749a0`](https://github.com/williamwue/appvanta/commit/93749a0cb87937149376aaac16adf8d199660acb) 为无父提交，其树 `03a5fb1` 与本地集成修订 `fda6c8b` 的树完全一致；主页描述、topics 与私密漏洞报告入口已设置。本地历史提交编号和上述 `.appvanta/` 忽略的设备证据并未随快照公开，托管 CI 与真机/OEM 验收仍未完成。对应 [GitHub Actions 运行](https://github.com/williamwue/appvanta/actions/runs/36435782854) 已以失败结束：Windows/macOS 遇到路径别名运行时/测试问题，Ubuntu 的 release-package `doctor` 因 ADB 不可用报 `spawn adb ENOENT`，Android job 缺少 `sdkmanager`。修复仅在本地准备，托管重跑尚无结果，不能计为托管通过。2026-09-26 的 77 项（core 31、Android 28、脚本 18）和 `.appvanta/wrapup-build.log`、`.appvanta/wrapup-tests.log` 是当时的历史快照。
 
 ## P0：下一轮先处理

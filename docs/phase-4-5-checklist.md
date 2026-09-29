@@ -1,6 +1,8 @@
 # 阶段 4 / 5 验收清单
 
-当前状态及去重后的 39 项待办见 [剩余任务清单](remaining-tasks.md)（更新于 2026-09-28）。以下保留逐次验收历史，较早段落的待办可能已被后续证据覆盖。最终目标保持覆盖 Argent / ARTEMIS 的公开可验证功能；本清单不宣称已完成竞品全部能力的逐项盘点。所有在线设备证据目前仅来自模拟器，没有 Android 真机或 OEM 验收。
+当前状态及去重后的 39 项待办见 [剩余任务清单](remaining-tasks.md)（更新于 2026-09-30）。以下保留逐次验收历史，较早段落的待办可能已被后续证据覆盖。最终目标保持覆盖 Argent / ARTEMIS 的公开可验证功能；本清单不宣称已完成竞品全部能力的逐项盘点。所有在线设备证据目前仅来自模拟器，没有 Android 真机或 OEM 验收。
+
+2026-09-30 当前补充：分支裁决、动态字符串值及强杀续跑见 [Flow 模板](flow-templates.md)、[动态值](flow-values.md)、[裁决验收](adjudication-cli.md)；模拟器 shake 及恢复见 [传感器](emulator-sensors.md)，SSIM/有限平移见 [视觉对齐](visual-alignment.md)。这些链接说明已实现范围及未验收边界，下列早期条目保留其当时状态。
 
 2026-09-28 更新：API 35 SDK r9 安装和 AVD boot 通过（本机忽略文件 `.appvanta/programs/appvanta-completion-g1/pilot-report.md`）；API 35 动态分段录屏媒体时长 195.470956 秒，API 37 为 199.342833 秒，严格解码通过（本机忽略文件 `.appvanta/worktrees/recording-g4/.appvanta/runs/segmented-recording-1790589670607/verification.json`、`.appvanta/worktrees/recording-g4/.appvanta/runs/video-content-1790589875060/verification.json`、`.appvanta/programs/appvanta-completion-g1/p0-01b-dynamic-report.md`、`.appvanta/worktrees/baseline-g3/.appvanta/runs/segmented-recording-1790591433876/verification.json`、`.appvanta/worktrees/baseline-g3/.appvanta/runs/video-content-1790591638420/verification.json`）。这些验证检查主机侧衔接与片段解码，不测量精确媒体间隙；2026-09-26 API 37 历史退出根因仍未知。旧失败运行 `segmented-recording-1790429923211` 已恢复残留采集，但旧 MP4 截断，证据为 `.appvanta/programs/appvanta-completion-g1/p0-02b-reuse-report.md`。
 

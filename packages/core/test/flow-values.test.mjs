@@ -7,6 +7,7 @@ import { spawn } from 'node:child_process';
 import { once } from 'node:events';
 import { fileURLToPath } from 'node:url';
 import { createRunContext, executeFlow, parseFlow, inspectFlowProgress, recordedFlow, prepareFlowContinuation } from '../dist/index.js';
+import { prepareAdjudicatedFlowContinuation } from '../dist/flow-progress.js';
 
 const target = { kind: 'resource-id', value: 'app:id/editor' };
 const device = { id: 'fake', name: 'fake', platform: 'android', status: 'online', capabilities: [] };
@@ -14,6 +15,27 @@ const definition = { name: 'Read and reuse', steps: [
   { description: 'Extract', extract: { name: 'note', target, attribute: 'text' } },
   { description: 'Reuse', inputValue: { name: 'note', target } },
 ] };
+for (const mode of ['during-read', 'after-value']) test(`unfinished extraction cannot be silently accepted after actual process crash: ${mode}`, async () => {
+  const root = await mkdtemp(join(tmpdir(), 'appvanta-value-unfinished-'));
+  const child = spawn(process.execPath, [fileURLToPath(new URL('./helpers/value-crash.fixture.mjs', import.meta.url)), root, mode], { windowsHide: true, stdio: ['ignore', 'ignore', 'pipe', 'ipc'] });
+  const exited = once(child, 'exit'); let stderr = ''; child.stderr.on('data', bytes => { stderr += bytes; });
+  try {
+    const [message] = await Promise.race([once(child, 'message', { signal: AbortSignal.timeout(15000) }), exited.then(() => { throw new Error(stderr); })]);
+    child.kill('SIGKILL'); await exited;
+    const progress = await inspectFlowProgress(message.root);
+    assert.equal(progress.phase, 'executing'); assert.equal(progress.completedSteps, 0);
+    const receipt = join(message.root, 'value-1.json');
+    if (mode === 'during-read') await assert.rejects(readFile(receipt), { code: 'ENOENT' });
+    else assert.equal(JSON.parse(await readFile(receipt, 'utf8')).value, 'Persisted 中文\nvalue');
+    const original = await readFile(join(message.root, 'progress.json'));
+    await assert.rejects(prepareFlowContinuation(message.root, { kind: 'text-visible', text: 'Ready' }), /Unsafe continuation/);
+    await assert.rejects(prepareAdjudicatedFlowContinuation(message.root, { kind: 'text-visible', text: 'Ready' }), /unfinished extraction/);
+    assert.deepEqual(await readFile(join(message.root, 'progress.json')), original);
+  } finally {
+    if (child.exitCode === null && child.signalCode === null) { child.kill('SIGKILL'); await exited; }
+    await rm(root, { recursive: true, force: true });
+  }
+});
 test('extracted Unicode value is persisted, consumed and recorded as the actual input', async () => {
   const root = await mkdtemp(join(tmpdir(), 'appvanta-values-'));
   try {
