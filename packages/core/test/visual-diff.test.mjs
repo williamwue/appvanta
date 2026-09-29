@@ -37,3 +37,34 @@ test('visual diff produces pixel metrics, bounds, tolerance gate and diff PNG', 
     await assert.rejects(comparePngScreenshots(baseline, current, diff, { maxMismatchRatio: 2 }), /maxMismatchRatio/);
   } finally { await rm(root, { recursive: true, force: true }); }
 });
+
+test('opt-in translation alignment preserves border differences and detects content changes', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'appvanta-alignment-'));
+  try {
+    const baseline = new PNG({ width: 32, height: 32 });
+    for (let y = 0; y < 32; y++) for (let x = 0; x < 32; x++) {
+      const i = (y * 32 + x) * 4;
+      baseline.data[i] = (x * 31 + y * 17) % 256;
+      baseline.data[i + 1] = (x * 13 + y * 47) % 256;
+      baseline.data[i + 2] = (x * 73 + y * 19) % 256; baseline.data[i + 3] = 255;
+    }
+    const current = new PNG({ width: 32, height: 32 }); current.data.fill(255);
+    for (let y = 0; y < 31; y++) for (let x = 0; x < 30; x++) baseline.data.copy(current.data, ((y + 1) * 32 + x + 2) * 4, (y * 32 + x) * 4, (y * 32 + x + 1) * 4);
+    const a = join(root, 'a.png'), b = join(root, 'b.png'), diff = join(root, 'diff.png');
+    await writeFile(a, PNG.sync.write(baseline)); await writeFile(b, PNG.sync.write(current));
+    assert.equal((await comparePngScreenshots(a, b, diff)).status, 'failed');
+    const options = { maxAlignmentShift: 3, channelThreshold: 0, maxMismatchRatio: 0.1 };
+    const aligned = await comparePngScreenshots(a, b, diff, options);
+    assert.equal(aligned.status, 'passed');
+    assert.equal(aligned.alignment.dx, 2); assert.equal(aligned.alignment.dy, 1);
+    assert.equal(aligned.alignment.unmatchedPixels, 94);
+    assert.equal(aligned.differentPixels, 94); assert.equal(aligned.comparedPixels, 1024);
+    assert.equal((await comparePngScreenshots(a, b, diff, { ...options, maxMismatchRatio: 0 })).status, 'failed');
+    current.data.fill(0, (15 * 32 + 15) * 4, (15 * 32 + 26) * 4);
+    await writeFile(b, PNG.sync.write(current));
+    assert.equal((await comparePngScreenshots(a, b, diff, options)).status, 'failed');
+    for (const maxAlignmentShift of [-1, 1.5, 17, NaN]) await assert.rejects(comparePngScreenshots(a, b, diff, { maxAlignmentShift }), /maxAlignmentShift/);
+    const same = await comparePngScreenshots(a, a, diff, options);
+    assert.equal(same.alignment.dx, 0); assert.equal(same.alignment.dy, 0); assert.equal(same.status, 'passed');
+  } finally { await rm(root, { recursive: true, force: true }); }
+});

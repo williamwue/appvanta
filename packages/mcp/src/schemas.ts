@@ -56,7 +56,10 @@ export function toolSchema(name: string, original: Schema): Schema {
   }
   if (properties.packageName) properties.packageName = packageName;
   if (properties.permission) properties.permission = { type: 'string', pattern: '^[A-Za-z0-9_.:]+$' };
-  if (name === 'compare_screenshots') properties.ignoreRegions = { type: 'array', maxItems: 100, items: object({ x: integer(0, 100000), y: integer(0, 100000), width: integer(1, 100000), height: integer(1, 100000) }) };
+  if (name === 'compare_screenshots') {
+    properties.ignoreRegions = { type: 'array', maxItems: 100, items: object({ x: integer(0, 100000), y: integer(0, 100000), width: integer(1, 100000), height: integer(1, 100000) }) };
+    properties.maxAlignmentShift = integer(0, 16);
+  }
   if (properties.action) properties.action = ref('action');
   if (properties.instruction) properties.instruction = ref('step');
   if (name === 'continue_task' || name === 'start_task_continuation') properties.checkpoint = { oneOf: conditions.filter(condition => (condition.properties as Record<string, { const?: string }>).kind?.const !== 'screen-stable') };
