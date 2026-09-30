@@ -13,10 +13,12 @@ import { recoverAndroidFlow, continueAndroidFlow } from '../packages/android/dis
 
 const device = process.argv[2]; assert(device, 'Device ID required');
 const cancelRecovery = process.argv[3] === 'cancel-recovery';
+const deviceReconnect = process.argv[3] === 'device-reconnect';
+if (deviceReconnect) assert(/^emulator-[0-9]+$/.test(device), 'Device reconnect verifier requires an explicit emulator');
 const tracePullDisconnect = process.argv[3] === 'tcp-pull-trace-disconnect';
 const pullDisconnect = process.argv[3] === 'tcp-pull-disconnect' || tracePullDisconnect;
 const tcpDisconnect = process.argv[3] === 'tcp-disconnect' || pullDisconnect;
-if (process.argv[3] && !cancelRecovery && !tcpDisconnect) throw new Error('Unknown recovery scenario');
+if (process.argv[3] && !cancelRecovery && !tcpDisconnect && !deviceReconnect) throw new Error('Unknown recovery scenario');
 const root = resolve('.appvanta/runs', `network-capture-recovery-${Date.now()}`); await mkdir(root, { recursive: true });
 const adb = (...args) => execFileSync(process.env.ADB_PATH || 'adb', ['-s', device, ...args], { encoding: 'utf8', windowsHide: true, timeout: 20000 }).trim();
 const originalProxy = adb('shell', 'settings', 'get', 'global', 'http_proxy');
@@ -43,7 +45,7 @@ try {
     : execFileSync('ps', ['-p', String(network.workerPid), '-o', 'command='], { encoding: 'utf8' });
   assert(command.includes('capture-network.py'));
   assert(command.toLowerCase().replaceAll('\\', '/').includes(join(message.run, 'network').toLowerCase().replaceAll('\\', '/')));
-  if (pullDisconnect) {
+  if (pullDisconnect || deviceReconnect) {
     const records = await Promise.all((await readdir(join(message.run, 'captures'))).filter(name => name.endsWith('.capture.json')).map(async name => JSON.parse(await readFile(join(message.run, 'captures', name), 'utf8'))));
     const screen = records.find(record => record.kind === 'screen');
     assert(screen, 'Screen capture record required');
@@ -57,6 +59,47 @@ try {
     }
     assert(bytes >= 2, 'Screen capture must contain bytes before testing mid-pull disconnection');
     await writeFile(join(root, 'capture-ready.json'), JSON.stringify({ remote: screen.remote, bytes, observedAt: new Date().toISOString() }, null, 2));
+  }
+  let deviceTransport;
+  if (deviceReconnect) {
+    const beforeLease = await inspectDeviceLock(device);
+    assert.equal(beforeLease.lease.pid, owner.pid);
+    const activeCaptures = [];
+    for (const name of (await readdir(join(message.run, 'captures'))).filter(name => name.endsWith('.capture.json'))) {
+      const record = JSON.parse(await readFile(join(message.run, 'captures', name), 'utf8'));
+      const pid = adb('shell', 'cat', `${record.control}.pid`);
+      assert.match(pid, /^[1-9][0-9]*$/);
+      const commandLine = adb('shell', `tr '\\000' ' ' < /proc/${pid}/cmdline`);
+      assert(commandLine.includes(record.remote), 'Capture process must own the expected output before reconnect');
+      activeCaptures.push({ kind: record.kind, pid, commandLine });
+    }
+    assert.deepEqual(activeCaptures.map(item => item.kind).sort(), ['screen', 'trace']);
+    const before = await transportObserver.snapshot('before-active-capture-device-reconnect');
+    const field = (snapshot, name) => {
+      const item = snapshot.results.find(result => result.name === name);
+      assert.equal(item.status, 'passed'); return item.stdout.trim();
+    };
+    const id = snapshot => {
+      const line = field(snapshot, 'devices').split(/\r?\n/).find(line => line.startsWith(`${device} `) || line.startsWith(`${device}\t`));
+      const match = /\btransport_id:([0-9]+)\b/.exec(line ?? ''); assert(match); return match[1];
+    };
+    let reconnect;
+    try { reconnect = { status: 'passed', stdout: adb('reconnect', 'device') }; }
+    catch (error) { reconnect = { status: 'failed', error: String(error), stdout: error.stdout, stderr: error.stderr }; }
+    adb('wait-for-device');
+    const after = await transportObserver.snapshot('after-active-capture-device-reconnect', true);
+    assert.notEqual(id(before), id(after));
+    assert.equal(field(before, 'bootId'), field(after, 'bootId'));
+    assert.equal(owner.exitCode, null); assert.equal(owner.signalCode, null);
+    assert.deepEqual((await inspectDeviceLock(device)).lease, beforeLease.lease);
+    assert.equal(adb('shell', 'settings', 'get', 'global', 'http_proxy'), network.sessionProxy);
+    for (const name of (await readdir(join(message.run, 'captures'))).filter(name => name.endsWith('.capture.json'))) {
+      const record = JSON.parse(await readFile(join(message.run, 'captures', name), 'utf8'));
+      assert.notEqual(record.cleaned, true);
+      assert.equal(adb('shell', `test -e ${record.remote} -a -e ${record.control}.pid && echo retained`), 'retained');
+    }
+    deviceTransport = { scope: 'device-end-reconnect-during-active-capture-before-owner-kill', activeCaptures, before, after, reconnect, beforeTransportId: id(before), afterTransportId: id(after), leaseUnchanged: true, proxyUnchanged: true };
+    await writeFile(join(root, 'device-reconnect.json'), JSON.stringify(deviceTransport, null, 2));
   }
   process.kill(network.workerPid, 'SIGKILL'); owner.kill('SIGKILL'); await exited;
   const state = await inspectDeviceLock(device); assert.equal(state.owner, 'dead'); assert.equal(state.lease.pid, owner.pid);
@@ -151,7 +194,7 @@ try {
   assert.equal(captures.length, 2);
   assert.equal(await inspectDeviceLock(device), null);
   assert.notEqual(JSON.parse(await readFile(join(message.run, 'run.json'), 'utf8')).status, 'passed');
-  await writeFile(join(root, 'verification.json'), JSON.stringify({ status: 'passed', originalProxy, run: message.run, cancellation, disconnection, result, takeover, captures }, null, 2));
+  await writeFile(join(root, 'verification.json'), JSON.stringify({ status: 'passed', originalProxy, run: message.run, cancellation, disconnection, deviceTransport, result, takeover, captures }, null, 2));
   console.log(JSON.stringify({ status: 'passed', root }));
 } catch (error) {
   await writeFile(join(root, 'verification.json'), JSON.stringify({ status: 'failed', error: String(error), stdout: error.stdout, stderr: error.stderr, relay: relay?.diagnostics, interruptedPull: relay?.interruptedPull, originalProxy, lease: await inspectDeviceLock(device) }, null, 2));

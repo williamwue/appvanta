@@ -1,5 +1,11 @@
 # Android 请求级采集
 
+## 设备端连接重建后的采集恢复
+
+复验命令：`node scripts/verify-network-capture-recovery.mjs emulator-5554 device-reconnect`，需配置 `APPVANTA_MITMDUMP`。该场景仅接受显式模拟器序列号，在录屏和 Perfetto 均启动、录屏已有字节后，读取 PID 与命令行证明采集进程正在运行，再执行 `adb reconnect device`。验证 transport ID 变化、boot ID 不变、原宿主/租约/代理设置及远端文件仍保留，然后强杀网络 Worker 与宿主，使用原 token 显式恢复。恢复后逐文件核对大小及 SHA-256、远端控制文件清理、代理还原和租约释放。
+
+API 37 `network-capture-recovery-1790737390334/verification.json` 通过：transport 3→4，录屏 17788 字节、trace 181663 字节，均 recovered/cleaned，观测进程已退出且事件无丢弃。首次运行 `1790737295658` 也恢复成功，但两类采集均出现一次约 20 秒的 recovery-ownership 超时，原始错误保留；最终复验没有传输错误。这些结果不解释历史托管拉取失败。当前覆盖设备端连接重建后、宿主强杀后的恢复，不覆盖设备断连恰好发生于 DATA 帧传输、USB 拔插、设备重启或真机/OEM。
+
 独立实现的 mitmproxy addon 通过公开的 response/error hooks 保存请求证据。
 参考协议文档：https://docs.mitmproxy.org/stable/addons/examples/
 
