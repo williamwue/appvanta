@@ -3,7 +3,7 @@ import { randomUUID, createHash } from 'node:crypto';
 import { execFile, spawn } from 'node:child_process';
 import { once } from 'node:events';
 import { promisify } from 'node:util';
-import { mkdir, writeFile } from 'node:fs/promises';
+import { mkdir, writeFile, readFile, readdir } from 'node:fs/promises';
 import { resolve, join } from 'node:path';
 import { withDeviceLock, inspectDeviceLock } from '../packages/core/dist/index.js';
 import { AdbDriver } from '../packages/android/dist/index.js';
@@ -20,7 +20,42 @@ const request = async (operation, mode, index) => adb('shell', 'am', 'start', '-
   ...(mode === 'prepare' ? ['--ei', 'index', String(index), '--ei', 'count', '2', '--es', 'mimeType', 'application/octet-stream', '--es', 'targetPackage', receiver, '-d', uris[index], '--grant-read-uri-permission'] : []));
 const receiptRaw = operation => adb('exec-out', 'content', 'read', '--uri', `content://${helper}/operations/${operation}`);
 const noDelivery = () => adb('shell', 'run-as', receiver, 'test', '!', '-e', 'files/received.json');
-const receipts = []; const prepared = []; const product = [];
+const receipts = []; const prepared = []; const product = []; const interruptions = [];
+const interruptHost = async phase => {
+  const hostDirectory = join(directory, phase);
+  const action = { kind: 'share-files', uris, mimeType: 'application/octet-stream', packageName: receiver };
+  const code = `import {shareFiles} from ${JSON.stringify(new URL('../packages/android/dist/multi-file-share.js', import.meta.url).href)};
+import {execFile} from 'node:child_process'; import {promisify} from 'node:util';
+const adb=async args=>(await promisify(execFile)(process.env.ADB_PATH??'adb',['-s',${JSON.stringify(device)},...args],{encoding:'utf8',windowsHide:true,timeout:20000})).stdout;
+const pause=async operation=>{process.send({operation,phase:${JSON.stringify(phase)}});await new Promise(()=>setInterval(()=>{},1000));};
+const execute=async args=>{
+ const mode=args[args.indexOf('mode')+1]; const operation=args[args.indexOf('operation')+1];
+ if(${JSON.stringify(phase)}==='prepared' && mode==='prepare' && args[args.indexOf('index')+1]==='1') await pause(operation);
+ const result=await adb(args);
+ if(${JSON.stringify(phase)}==='dispatch-response' && mode==='dispatch') {
+  const deadline=Date.now()+10000;
+  for(;;){const receipt=JSON.parse(await adb(['exec-out','content','read','--uri','content://dev.appvanta.share.helper/operations/'+operation]));if(receipt.state==='dispatched')break;if(Date.now()>deadline)throw new Error('Delivery receipt not observed');await new Promise(resolve=>setTimeout(resolve,50));}
+  await pause(operation);
+ }
+ return result;
+};
+await shareFiles(${JSON.stringify(action)},${JSON.stringify(hostDirectory)},execute,adb);throw new Error('Expected host interruption');`;
+  const child = spawn(process.execPath, ['--input-type=module', '-e', code], { windowsHide: true, stdio: ['ignore', 'ignore', 'pipe', 'ipc'] });
+  const exited = once(child, 'exit'); let stderr = ''; child.stderr.on('data', bytes => { stderr += bytes; });
+  try {
+    const [message] = await Promise.race([once(child, 'message', { signal: AbortSignal.timeout(120000) }), exited.then(() => { throw new Error(stderr || 'Host exited before boundary'); })]);
+    assert.equal(message.phase, phase); assert.match(message.operation, /^[a-f0-9-]{36}$/);
+    child.kill('SIGKILL'); const exit = await exited;
+    const files = await readdir(hostDirectory);
+    const requestFile = `share-${message.operation}-request.json`;
+    const saved = JSON.parse(await readFile(join(hostDirectory, requestFile), 'utf8'));
+    assert.deepEqual(saved.action, action); assert.equal(saved.operation, message.operation);
+    assert(!files.some(name => name.endsWith('-dispatched.json') || name.endsWith('-failure.json')));
+    assert.equal(files.some(name => name.endsWith('-dispatch-intent.json')), phase === 'dispatch-response');
+    if (phase === 'prepared') assert(files.some(name => name.endsWith('-prepared-1.json')));
+    return { ...message, pid: child.pid, exit, hostDirectory, files };
+  } finally { if (child.exitCode === null && child.signalCode === null) { child.kill('SIGKILL'); await exited; } }
+};
 let expectedReport;
 try {
   await withDeviceLock(device, async () => {
@@ -67,6 +102,27 @@ try {
     await request(operation, 'prepare', 0); await waitText('Operation already exists'); await noDelivery();
     assert.equal(await receiptRaw(operation), sentRaw); receipts.push({ scenario: 'dispatched-replay-refused', receipt: sent, unchanged: true });
     await driver.stopApp(device, helper);
+    for (const phase of ['prepared', 'dispatch-response']) {
+      await driver.stopApp(device, receiver); await adb('shell', 'run-as', receiver, 'rm', '-f', 'files/received.json');
+      const killed = await interruptHost(phase);
+      const raw = await receiptRaw(killed.operation), durable = JSON.parse(raw);
+      assert.equal(durable.operation, killed.operation); assert.equal(durable.count, 2);
+      assert.equal(durable.state, phase === 'prepared' ? 'prepared' : 'dispatched');
+      assert.deepEqual(durable.uris, phase === 'prepared' ? uris.slice(0, 1) : uris);
+      if (phase === 'prepared') {
+        await noDelivery(); await request(killed.operation, 'cancel');
+        assert.equal(JSON.parse(await receiptRaw(killed.operation)).state, 'cancelled'); await noDelivery();
+      } else {
+        const delivered = JSON.parse(await adb('exec-out', 'run-as', receiver, 'cat', 'files/received.json'));
+        assert.deepEqual(delivered.items, expectedReport.items);
+        await writeFile(join(directory, 'host-interrupted-delivery.json'), JSON.stringify(delivered, null, 2));
+        await driver.stopApp(device, receiver); await adb('shell', 'run-as', receiver, 'rm', '-f', 'files/received.json');
+        await request(killed.operation, 'prepare', 0); await waitText('Operation already exists'); await noDelivery();
+        assert.equal(await receiptRaw(killed.operation), raw);
+      }
+      interruptions.push({ ...killed, receipt: durable, outcome: phase === 'prepared' ? 'explicitly-cancelled-without-delivery' : 'delivery-confirmed-and-replay-refused', lockScope: 'verifier parent retains device lock; killed child runs actual shareFiles with real adb' });
+      await driver.stopApp(device, helper);
+    }
   });
     const flow = { name: 'Product multi-attachment delivery', steps: [
       { description: 'Send two attachments', action: { kind: 'share-files', uris, mimeType: 'application/octet-stream', packageName: receiver } },
@@ -105,8 +161,8 @@ try {
     await driver.stopApp(device, source);
   });
   assert.equal(await inspectDeviceLock(device), null);
-  await writeFile(join(directory, 'verification.json'), JSON.stringify({ status: 'passed', device, tokens, receipts, product, fixturesRemoved: true }, null, 2));
+  await writeFile(join(directory, 'verification.json'), JSON.stringify({ status: 'passed', device, tokens, receipts, product, interruptions, fixturesRemoved: true }, null, 2));
   console.log(JSON.stringify({ status: 'passed', directory }));
 } catch (error) {
-  await writeFile(join(directory, 'verification.json'), JSON.stringify({ status: 'failed', error: String(error), tokens, prepared, receipts, product, lease: await inspectDeviceLock(device) }, null, 2)); throw error;
+  await writeFile(join(directory, 'verification.json'), JSON.stringify({ status: 'failed', error: String(error), tokens, prepared, receipts, product, interruptions, lease: await inspectDeviceLock(device) }, null, 2)); throw error;
 }

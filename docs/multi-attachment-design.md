@@ -41,3 +41,5 @@ node scripts/verify-multi-share-probe.mjs emulator-5554
 来源撤销补充：API 37 运行 .appvanta/runs/multi-share-probe-1790727033098/verification.json 通过。第一项准备后，来源撤销该 URI 的只读授权但保留文件；接着准备第二项时，桥接应用在最终 startActivity 受到 Android SecurityException 拒绝，接收端没有 received.json。来源重新授予 shell 读取权限后，新 operation 的两项交付、摘要与只读检查通过。夹具增加具名文件的 revoke/grant 控制，不改变产品授权策略。
 
 产品验收：.appvanta/runs/share-helper-1790727695741/verification.json 在 API 37 通过 helper 持久回执、准备进程丢失后拒绝续接/重建、取消不交付，以及已交付 operation 重复请求拒绝；旧回执逐字节保持不变。同次真实 CLI run-flow 和 MCP run_flow 均用 share-files 完成双附件交付，接收应用核对两份不同内容的 4096 字节及摘要、URI 顺序和只读权限。源码构建和完整 261 项回归通过（core127、Android94、脚本40）。模拟发送响应丢失的宿主回归验证不重复 dispatch，不代表实际宿主在所有指令窗口强杀已验收。API 35 产品 helper 步骤已加入 CI，尚待对应修订结果。
+
+实际分享进程强杀：.appvanta/runs/share-helper-1790728046188/verification.json 在 API 37 通过两个窗口。第一项准备回执已落盘、第二项尚未执行时，实际执行 shareFiles 的子进程被 SIGKILL，随后读取 prepared 回执并显式取消，接收端无交付。第二个窗口在 Android 已保存 dispatched、真实接收内容已形成，但 ADB 执行回调尚未返回给 shareFiles 时 SIGKILL；宿主只有 dispatch-intent、没有 dispatched/failure 文件，设备回执确认发送，重复 operation 被拒绝且回执未变化。同次 CLI/MCP 正常双附件流程仍通过。父验证进程持续持有设备锁，因此此证据不证明整个 Flow 租约所有者退出或所有宿主/Activity 崩溃窗口。
