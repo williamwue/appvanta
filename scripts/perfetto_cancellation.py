@@ -15,10 +15,11 @@ class AnalysisCancelled(Exception):
 
 
 class AnalysisControl:
-    def __init__(self, cancel_file, output):
+    def __init__(self, cancel_file, output, owner_stdin=False):
         self.cancel_file = Path(cancel_file) if cancel_file else None
         self.output = Path(output)
         self.cancelled = threading.Event()
+        self.owner_disconnected = threading.Event()
         self.stopped = threading.Event()
         self.processor = None
         self.process = None
@@ -30,6 +31,19 @@ class AnalysisControl:
         self.deadline = time.monotonic() + 110
         self.monitor = threading.Thread(target=self._monitor, daemon=True)
         self.monitor.start()
+        if owner_stdin:
+            threading.Thread(target=self._watch_owner, daemon=True).start()
+
+    def _watch_owner(self):
+        # The SDK owns the pipe's write end. Unbuffered reads avoid holding a
+        # Python buffered-stream lock during interpreter shutdown.
+        try:
+            while os.read(0, 1):
+                pass
+        except OSError:
+            pass
+        self.owner_disconnected.set()
+        self.cancelled.set()
 
     def requested(self):
         return self.cancelled.is_set() or bool(self.cancel_file and self.cancel_file.exists()) or time.monotonic() >= self.deadline
@@ -86,6 +100,7 @@ class AnalysisControl:
         if self.requested():
             self.cancelled.set()
         return {'requested': self.cancelled.is_set(), 'processorPid': self.process.pid if self.process else None,
+                'ownerDisconnected': self.owner_disconnected.is_set(),
                 'processorExited': self.process.poll() is not None if self.process else None,
                 'resolverPid': self.resolver.pid if self.resolver else None,
                 'resolverExited': self.resolver.poll() is not None if self.resolver else None,

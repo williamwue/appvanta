@@ -20,7 +20,7 @@ COALESCE(SUM(CASE WHEN s.state IN ('R','R+') AND s.dur < 0 THEN 1 ELSE 0 END),0)
 FROM thread_state s JOIN thread t USING(utid)
 WHERE t.upid IN ({upids}) AND s.ts < {end} AND (s.dur < 0 OR s.ts+s.dur > {start})'''
 
-def analyze(trace, package, output, scenario, window_ms=None, processor=None, cancel_file=None):
+def analyze(trace, package, output, scenario, window_ms=None, processor=None, cancel_file=None, owner_stdin=False):
     from perfetto.trace_processor import TraceProcessorConfig
     if not re.fullmatch(r'[A-Za-z0-9_.]+', package):
         raise ValueError('Invalid package name')
@@ -30,7 +30,7 @@ def analyze(trace, package, output, scenario, window_ms=None, processor=None, ca
     output = Path(output).resolve()
     output.mkdir(parents=True, exist_ok=False)
     summary = {'version': 1, 'status': 'failed', 'trace': str(trace), 'packageName': package, 'queries': []}
-    control = AnalysisControl(cancel_file, output)
+    control = AnalysisControl(cancel_file, output, owner_stdin=owner_stdin)
     try:
         digest = hashlib.sha256()
         with trace.open('rb') as source:
@@ -180,10 +180,11 @@ if __name__ == '__main__':
     parser.add_argument('--window-ms', type=int)
     parser.add_argument('--processor')
     parser.add_argument('--cancel-file')
+    parser.add_argument('--owner-stdin', action='store_true', help='Cancel when the SDK-owned stdin pipe closes')
     args = parser.parse_args()
     if not args.scenario.strip(): parser.error('scenario must not be empty')
     try:
-        print(json.dumps(analyze(args.trace, args.package, args.output, args.scenario, args.window_ms, args.processor, args.cancel_file)))
+        print(json.dumps(analyze(args.trace, args.package, args.output, args.scenario, args.window_ms, args.processor, args.cancel_file, args.owner_stdin)))
     except Exception as error:
         print(str(error), file=sys.stderr)
         sys.exit(1)

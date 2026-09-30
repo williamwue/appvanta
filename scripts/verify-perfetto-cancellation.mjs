@@ -135,6 +135,12 @@ for (const client of ['sdk', 'mcp', 'cli', 'owner-kill']) {
       assert(response.signal === 'SIGKILL' || response.code !== 0, 'Owner must not exit successfully');
       assert(Date.now() - started < 5000, 'Owner death cleanup exceeded five seconds');
       assert.notEqual(analysis?.status, 'passed', 'Killed owner must not leave successful analysis');
+      if (process.platform !== 'win32') assert(analysis, 'POSIX owner disconnect must retain a cancellation receipt');
+      if (analysis) {
+        assert.equal(analysis.status, 'cancelled');
+        assert.equal(analysis.cancellation.ownerDisconnected, true);
+        assert.equal(analysis.cancellation.cleanupError, null);
+      }
     } else {
       assert(analysis, 'Cancellation evidence missing');
       assert.equal(analysis.status, 'cancelled');

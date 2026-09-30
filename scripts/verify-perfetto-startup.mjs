@@ -7,13 +7,15 @@ import { join, resolve } from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
 
 const python = process.argv[2]; assert(python, 'Specify Perfetto Python executable');
+const ownerPipe = process.argv[3] === 'owner-pipe';
+assert(process.argv[3] === undefined || ownerPipe, 'Unknown startup verification mode');
 const root = resolve('.appvanta/runs', `perfetto-startup-${Date.now()}`); await mkdir(root, { recursive: true });
 const fixture = join(root, 'unready.py'), checkpoint = join(root, 'started.json');
 await writeFile(fixture, `#!/usr/bin/env python3\nimport json, os, time\nfrom pathlib import Path\nPath(${JSON.stringify(checkpoint.replaceAll('\\', '/'))}).write_text(json.dumps({'pid':os.getpid()}))\ntime.sleep(90)\n`);
 if (process.platform !== 'win32') await chmod(fixture, 0o700);
 const trace = join(root, 'input.trace'), cancel = join(root, 'cancel.json'), output = join(root, 'analysis');
 await writeFile(trace, 'Startup fixture; never parsed');
-const child = spawn(python, ['scripts/analyze-perfetto.py', '--trace', trace, '--package', 'dev.appvanta.fixture', '--output', output, '--processor', fixture, '--cancel-file', cancel], { windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'] });
+const child = spawn(python, ['scripts/analyze-perfetto.py', '--trace', trace, '--package', 'dev.appvanta.fixture', '--output', output, '--processor', fixture, '--cancel-file', cancel, ...(ownerPipe ? ['--owner-stdin'] : [])], { windowsHide: true, stdio: [ownerPipe ? 'pipe' : 'ignore', 'pipe', 'pipe'] });
 const exited = once(child, 'exit'); let stdout = '', stderr = '';
 child.stdout.on('data', data => { stdout += data; }); child.stderr.on('data', data => { stderr += data; });
 let processInfo, requestedAt;
@@ -26,7 +28,9 @@ try {
   }
   assert(processInfo, 'Startup fixture did not launch');
   process.kill(processInfo.pid, 0);
-  requestedAt = Date.now(); await writeFile(cancel, '{}');
+  requestedAt = Date.now();
+  if (ownerPipe) child.stdin.end();
+  else await writeFile(cancel, '{}');
   let timer;
   const result = await Promise.race([exited, new Promise((_, reject) => { timer = setTimeout(() => reject(new Error('Startup cancellation exceeded 45 seconds')), 45000); })]).finally(() => clearTimeout(timer));
   const elapsedMs = Date.now() - requestedAt;
@@ -35,6 +39,7 @@ try {
   assert.throws(() => process.kill(processInfo.pid, 0), { code: 'ESRCH' });
   const analysis = JSON.parse(await readFile(join(output, 'analysis.json'), 'utf8'));
   assert.equal(analysis.status, 'cancelled'); assert.equal(analysis.cancellation.requested, true);
+  assert.equal(analysis.cancellation.ownerDisconnected, ownerPipe);
   assert.throws(() => process.kill(analysis.cancellation.processorPid, 0), { code: 'ESRCH' });
   assert.equal(analysis.cancellation.processorExited, true);
   assert.equal(analysis.cancellation.cleanupError, null);
@@ -42,7 +47,7 @@ try {
   assert.equal(processor.pid, analysis.cancellation.processorPid);
   assert.equal(processor.phase, 'starting-server');
   for (const name of ['metrics.json', 'report.md']) await assert.rejects(access(join(output, name)));
-  const verification = { status: 'passed', scope: 'direct-python-unready-server-cancellation', root, elapsedMs,
+  const verification = { status: 'passed', scope: 'direct-python-unready-server-cancellation', trigger: ownerPipe ? 'owner-pipe-eof' : 'cancel-file', root, elapsedMs,
     fixturePid: processInfo.pid, fixtureExited: true, analysis, stdout, stderr,
     limitation: 'Direct Python startup cancellation with a non-serving executable; not SDK/MCP startup or real server readiness' };
   const injection = join(root, 'fixture'); await mkdir(injection);

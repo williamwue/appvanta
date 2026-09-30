@@ -66,6 +66,7 @@ jobs:
         run: |
           python scripts/verify-perfetto-initialization.py
           node scripts/verify-perfetto-startup.mjs python
+          node scripts/verify-perfetto-startup.mjs python owner-pipe
       - name: Stage run evidence only
         if: always()
         run: node scripts/stage-evidence.mjs .appvanta/runs .appvanta/ci-evidence

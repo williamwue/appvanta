@@ -13,7 +13,7 @@ export async function analyzePerfetto(options: { trace: string; packageName: str
   const output = resolve('.appvanta/runs', `perfetto-analysis-${Date.now()}-${randomUUID()}`);
   const script = fileURLToPath(new URL('./runtime/analyze-perfetto.py', import.meta.url));
   const cancelFile = `${output}.cancel`;
-  const args = [script, '--trace', resolve(options.trace), '--package', options.packageName, '--output', output, '--scenario', options.scenario ?? 'uncontrolled-trace', '--cancel-file', cancelFile];
+  const args = [script, '--trace', resolve(options.trace), '--package', options.packageName, '--output', output, '--scenario', options.scenario ?? 'uncontrolled-trace', '--cancel-file', cancelFile, '--owner-stdin'];
   if (options.windowMs !== undefined) args.push('--window-ms', String(options.windowMs));
   await mkdir(dirname(output), { recursive: true });
   options.signal?.throwIfAborted();

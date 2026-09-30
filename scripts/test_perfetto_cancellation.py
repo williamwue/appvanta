@@ -1,4 +1,7 @@
 import tempfile
+import json
+import subprocess
+import sys
 import unittest
 from pathlib import Path
 from types import SimpleNamespace
@@ -8,6 +11,32 @@ from perfetto_cancellation import AnalysisControl
 
 
 class FinalizationCancellationTests(unittest.TestCase):
+    def test_owner_pipe_eof_requests_cancellation(self):
+        code = ('import json,time; from perfetto_cancellation import AnalysisControl; '
+                'c=AnalysisControl(None,".",owner_stdin=True); '
+                'c.cancelled.wait(2); print(json.dumps(c.finish()))')
+        result = subprocess.run([sys.executable, '-c', code], input='', capture_output=True,
+                                text=True, timeout=5, check=True)
+        evidence = json.loads(result.stdout)
+        self.assertTrue(evidence['requested'])
+        self.assertTrue(evidence['ownerDisconnected'])
+
+    def test_live_owner_pipe_does_not_prevent_normal_exit(self):
+        code = ('import json,time; from perfetto_cancellation import AnalysisControl; '
+                'c=AnalysisControl(None,".",owner_stdin=True); '
+                'time.sleep(0.1); print(json.dumps(c.finish()))')
+        with subprocess.Popen([sys.executable, '-c', code], stdin=subprocess.PIPE,
+                              stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True) as child:
+            try:
+                self.assertEqual(child.wait(timeout=5), 0)
+                evidence = json.loads(child.stdout.read())
+                self.assertFalse(evidence['requested'])
+                self.assertFalse(evidence['ownerDisconnected'])
+            finally:
+                if child.poll() is None:
+                    child.kill()
+                    child.wait()
+
     def test_request_before_finish_is_recorded_without_monitor_tick(self):
         with tempfile.TemporaryDirectory() as directory:
             request = Path(directory) / 'cancel.json'
