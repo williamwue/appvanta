@@ -84,7 +84,7 @@ try {
     assert(packed.files.some(file => file.path === 'dist/LICENSE'), `${name} package is missing LICENSE`);
     assert(packed.files.some(file => file.path === 'dist/THIRD_PARTY_NOTICES.md'), `${name} package is missing third-party notices`);
     assert(!packed.files.some(file => /\.(?:apk|dylib|pem|key)$/i.test(file.path)), `${name} package contains a prohibited binary or key file`);
-    if (name === 'android') for (const runtime of ['capture-network.py', 'network-addon.py', 'network_finalization.py', 'proxy_recovery.py', 'analyze-perfetto.py', 'GradleBuildBridge.java']) assert(packed.files.some(file => file.path === `dist/runtime/${runtime}`), `android package is missing ${runtime}`);
+    if (name === 'android') for (const runtime of ['capture-network.py', 'network-addon.py', 'network_finalization.py', 'proxy_recovery.py', 'analyze-perfetto.py', 'GradleBuildBridge.java', 'BuildProcessIdentity.java']) assert(packed.files.some(file => file.path === `dist/runtime/${runtime}`), `android package is missing ${runtime}`);
     dependencies[`@appvanta/${name}`] = `file:${join(tarballs, packed.filename).replaceAll('\\', '/')}`;
   }
   await writeFile(join(workspace, 'package.json'), JSON.stringify({ name: 'appvanta-release-verification', private: true, dependencies }, null, 2));
@@ -119,6 +119,8 @@ try {
   assert((await stat(join(workspace, 'node_modules/@appvanta/android/dist/runtime/capture-network.py'))).isFile());
   assert.deepEqual(await readFile(join(workspace, 'node_modules/@appvanta/android/dist/runtime/GradleBuildBridge.java')),
     await readFile(join(root, 'packages/android/runtime/GradleBuildBridge.java')), 'installed Gradle runtime must match the verified source');
+  assert.deepEqual(await readFile(join(workspace, 'node_modules/@appvanta/android/dist/runtime/BuildProcessIdentity.java')),
+    await readFile(join(root, 'packages/android/runtime/BuildProcessIdentity.java')), 'installed process identity runtime must match the verified source');
   const packageNames = packages.map(name => `@appvanta/${name}`);
   await runNpm(['uninstall', ...packageNames, '--ignore-scripts', '--no-audit', '--no-fund'], { cwd: workspace });
   for (const name of packageNames) {

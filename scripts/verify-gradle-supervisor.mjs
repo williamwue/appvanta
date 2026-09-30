@@ -6,6 +6,7 @@ import { setTimeout as delay } from 'node:timers/promises';
 import { acquireBuildProject } from '../packages/android/dist/build-ownership.js';
 import { runBuildProcess } from '../packages/android/dist/build-process.js';
 import { writeGradleBridgeRequest } from '../packages/android/dist/build-request.js';
+import { inspectBuildProcessIdentity } from '../packages/android/dist/build-identity.js';
 import { resolveGradleInstallation } from './gradle-installation.mjs';
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
@@ -81,9 +82,24 @@ try {
   }
   assert.equal(report.bridge.bridgePid, report.process.pid);
   assert.equal(report.bridge.invocation, report.task.invocation);
+  const identity = (name, startEpochMillis = report.task.startEpochMillis) => inspectBuildProcessIdentity({
+    java: binary('java'), pid: report.task.pid, startEpochMillis, outputPath: join(evidence, `${name}.json`),
+  });
+  report.identityBeforeStop = await identity('identity-before-stop');
+  assert.equal(report.identityBeforeStop.state, 'matching');
+  report.mismatchedIdentity = await identity('identity-wrong-start', report.task.startEpochMillis + 1);
+  assert.equal(report.mismatchedIdentity.state, 'different');
+  assert(alive(report.task.pid), 'Identity inspection must not terminate the daemon');
   report.stop = await stop(); checked(report.stop);
   const stopDeadline = Date.now() + 10000;
-  while (alive(report.task.pid)) { assert(Date.now() < stopDeadline, 'Daemon did not exit'); await delay(50); }
+  report.identityAfterStop = [];
+  while (true) {
+    const observed = await identity(`identity-after-stop-${report.identityAfterStop.length}`);
+    report.identityAfterStop.push(observed);
+    if (observed.state === 'absent' || observed.state === 'different') break;
+    assert.notEqual(observed.state, 'unknown', 'Daemon identity could not be confirmed');
+    assert(Date.now() < stopDeadline, 'Original daemon did not exit'); await delay(50);
+  }
   report.daemonExited = true;
   report.ownership = await ownership.finish({ execution: mode === 'cancel' ? 'cancelled' : 'failed', cleanup: 'verified' });
   assert.equal(report.ownership.released, true);
