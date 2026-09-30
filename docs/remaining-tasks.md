@@ -46,6 +46,8 @@ API 37 / Android 17 已验证裁决后步骤边界再次崩溃、只读等待执
 
 ## 本轮已完成的范围
 
+- 构建取消原型新增实际 JavaExec 与 Worker API processIsolation 场景：Windows 分别在 251/296 ms 返回取消，确认子 JVM/Worker 退出，随后仅停止专属用户目录的 daemon 并确认退出。Worker 参数夹具首次失败与修正记录保留；三系统 CI 已加入两种场景，尚待托管验收。任意派生进程、bridge 强杀及产品执行器仍未完成，见 android-build-execution-design.md。
+
 - 构建执行器的 Tooling API 原型已取得 Windows 真正任务取消证据：`gradle-cancellation-1790750011334` 客户端输入关闭后 246 ms 返回 BuildCancelledException，但 daemon 仍活着；针对专属 Gradle 用户目录停止后确认退出。三系统 CI 已接入该原型，结果待确认。此证据不等于产品执行器或任意 Worker/派生进程清理完成，后续状态与占用设计见 android-build-execution-design.md。
 
 - Gradle 选择修正的 CI `36677718660` 三系统主机任务均成功，318 个归档文件核验通过；同一源码输入与启动 JAR 完成真实两模块 APK 构建、SDK 缺失/资源链接/离线依赖三个失败诊断及三客户端一致性检查。Windows 确认环境 9.8.0 覆盖被跳过，使用 PATH 的 8.13。APK 摘要不同，未证明可复现发行物或安装运行；设备任务与后续日志超时回执保持独立验收，39 项计数不变。

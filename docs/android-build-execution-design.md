@@ -10,6 +10,10 @@ Windows/JDK 21、Gradle 8.13 的 `gradle-cancellation-1790750011334` 使用正�
 
 这说明构建终态与进程清理状态是两个事实。该证据只涉及等待任务，不覆盖 JavaExec、编译 Worker、任意项目派生进程、强杀 bridge 或停止期间再次断连。
 
+后续 Windows 原型补充：`gradle-cancellation-1790750230665` 的 JavaExec 子 JVM 在实际写入 PID 7692 后才关闭 bridge 输入，251 ms 返回取消，子 JVM 在停止 daemon 前已退出；daemon 11700 随专属目录 stop 退出。Worker API `processIsolation` 的 `1790750323831` 同样先确认 daemon 32932 与 Worker 11684 均存活，再触发 EOF；296 ms 返回取消，Worker 此时已退出，daemon 仍活着，专属 stop 后确认两者均退出。这覆盖受 Gradle 管理的两个具体子进程场景，不覆盖任意项目自行启动的进程。
+
+Worker 初次运行 `1790750295584` 在提交参数配置时失败，尚未启动 Worker；已保留日志和专属 stop 的退出 0 回执。修正 WorkQueue.submit 的参数 closure 后复验通过，不将夹具失败算作产品缺陷。`APPVANTA_GRADLE_CANCEL_TASK` 现支持 wait/javaexec/worker，三系统 CI 分别执行三种原型；新增两种的托管结果待确认。
+
 ## 选定的产品结构
 
 - `BuildRequest` 保存规范化项目目录、明确的 Gradle/JDK 安装、任务数组、超时和运行 ID。任务按参数传递，不拼接 shell。版本与启动文件摘要绑定运行记录。
@@ -23,6 +27,6 @@ Windows/JDK 21、Gradle 8.13 的 `gradle-cancellation-1790750011334` 使用正�
 
 由一个写入者负责 Android 包的执行器、Java runtime bridge 和共享报告类型；CLI/MCP 在 SDK 生命周期通过后接入，同一项目的状态文件修改串行进行。现有跨平台 CI 和设备验收可以独立运行，互不占用这套专属 Gradle 用户目录。
 
-先补真实 JavaExec/Worker 取消、父 Node 退出、bridge 强杀、取消与正常完成竞争、专属 daemon 停止失败及重复恢复，再实现带占用保护的 SDK。验收必须证明无重复构建、未确认清理不释放占用、其他项目及用户默认 daemon 不被停止。随后提供 CLI/MCP 执行和取消，并将实际 Android 两模块 APK 构建从验证专用入口迁移到产品入口。
+先完成 JavaExec/Worker 的托管验收，并补父 Node 退出、bridge 强杀、取消与正常完成竞争、专属 daemon 停止失败及重复恢复，再实现带占用保护的 SDK。验收必须证明无重复构建、未确认清理不释放占用、其他项目及用户默认 daemon 不被停止。随后提供 CLI/MCP 执行和取消，并将实际 Android 两模块 APK 构建从验证专用入口迁移到产品入口。
 
 恢复与清理不能仅靠放宽超时。对无法控制的派生进程或不合作任务，执行器应返回明确的未恢复状态和证据；其完整支持仍属于原清单范围。当前原型不改变 39 项完成计数。

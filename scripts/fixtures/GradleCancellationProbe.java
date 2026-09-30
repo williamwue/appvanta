@@ -8,7 +8,7 @@ import org.gradle.tooling.ProjectConnection;
 
 public final class GradleCancellationProbe {
     public static void main(String[] args) throws Exception {
-        if (args.length != 4) throw new IllegalArgumentException("installation project user-home receipt");
+        if (args.length != 5) throw new IllegalArgumentException("installation project user-home receipt task");
         CancellationTokenSource cancellation = GradleConnector.newCancellationTokenSource();
         Thread owner = new Thread(() -> {
             try { while (System.in.read() != -1) { } }
@@ -23,7 +23,7 @@ public final class GradleCancellationProbe {
                 .useInstallation(new File(args[0]))
                 .forProjectDirectory(new File(args[1]))
                 .useGradleUserHomeDir(new File(args[2])).connect()) {
-            connection.newBuild().forTasks("waitForCancellation")
+            connection.newBuild().forTasks(args[4])
                 .withArguments("--offline", "--console=plain", "--max-workers=1")
                 .withCancellationToken(cancellation.token())
                 .setStandardOutput(System.out).setStandardError(System.err).run();

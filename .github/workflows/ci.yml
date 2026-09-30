@@ -51,6 +51,16 @@ jobs:
       - name: Verify Gradle Tooling API owner disconnect cancellation
         timeout-minutes: 5
         run: node scripts/verify-gradle-cancellation.mjs
+      - name: Verify Gradle JavaExec cancellation and child exit
+        timeout-minutes: 5
+        env:
+          APPVANTA_GRADLE_CANCEL_TASK: javaexec
+        run: node scripts/verify-gradle-cancellation.mjs
+      - name: Verify Gradle isolated Worker cancellation and process exit
+        timeout-minutes: 5
+        env:
+          APPVANTA_GRADLE_CANCEL_TASK: worker
+        run: node scripts/verify-gradle-cancellation.mjs
       - name: Verify installed Python SDK
         timeout-minutes: 5
         run: |
