@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+import { inspectAndroidProject } from '@appvanta/android';
 import { randomUUID } from 'node:crypto';
 import { spawn } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
@@ -87,6 +88,7 @@ const rawTools = [
 ];
 
 rawTools.push({ ...rawTools.find(tool => tool.name === 'continue_task')!, name: 'start_task_continuation', description: 'Continue an interrupted task in an independent local worker. Returns a successor task ID after verified worker readiness. Recovery continues if this MCP process exits. Use get_task and cancel_task for the successor; inspect the persisted continuation request on startup timeout.' });
+rawTools.push({ name: 'inspect_android_project', description: 'Inspect Gradle project files and optionally classify a retained build log without evaluating or executing project code', inputSchema: { type: 'object', additionalProperties: false, properties: { projectDirectory: { type: 'string', minLength: 1 }, buildLogPath: { type: 'string', minLength: 1 } }, required: ['projectDirectory'] } });
 const tools = rawTools.map(tool => ({ ...tool, inputSchema: toolSchema(tool.name, tool.inputSchema) }));
 const ajv = new Ajv({ strict: false, allErrors: false, coerceTypes: false });
 ajv.addFormat('http-url', { type: 'string', validate: (value: string) => { try { return ['http:', 'https:'].includes(new URL(value).protocol); } catch { return false; } } });
@@ -129,6 +131,7 @@ async function callUnlockedTool(name: string | undefined, args: Record<string, u
   const driver = new AdbDriver({ artifactsDirectory: resolve(".appvanta", "mcp-artifacts", randomUUID()), signal });
   const deviceId = typeof args.deviceId === "string" ? brand<string, "DeviceId">(args.deviceId) : undefined;
   switch (name) {
+    case 'inspect_android_project': return inspectAndroidProject({ projectDirectory: String(args.projectDirectory), ...(typeof args.buildLogPath === 'string' ? { buildLogPath: args.buildLogPath } : {}), signal });
     case 'upload_attachment': return driver.uploadAttachment(brand(String(args.deviceId)), String(args.localFile), String(args.mimeType), typeof args.displayName === 'string' ? args.displayName : undefined);
     case 'inspect_upload': return driver.inspectUpload(brand(String(args.deviceId)), String(args.id));
     case 'delete_upload': return driver.deleteUpload(brand(String(args.deviceId)), String(args.id));

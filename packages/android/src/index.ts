@@ -26,3 +26,5 @@ export { parseAttachmentShareReceipt } from './multi-file-share.js';
 export type { AttachmentShareReceipt } from './multi-file-share.js';
 export { recoverNetworkSession } from './network-session.js';
 export { parsePermissionGrant, parsePermissionFlags, recoverRuntimePermissions, startRuntimePermissions } from './permission-fixture.js';
+export { inspectAndroidProject } from './project-diagnostics.js';
+export type { AndroidProjectReport, ProjectFinding } from './project-diagnostics.js';
