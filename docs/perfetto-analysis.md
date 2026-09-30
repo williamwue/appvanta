@@ -37,7 +37,17 @@ CLI 最后两个参数为可选的 Python 路径和分析窗口毫秒数；省�
 
 Flow 自动启动和结束采集已接入，成功、失败和取消路径均保存产物。
 
-尚未完成：广泛场景的可重复基线、帧卡顿分析、分析子进程取消管理及完整设备断连验收。采集宿主强杀与 TCP 拉取中断恢复已有有限验收，见 network-capture.md；不等于分析子进程已支持取消。指标不表示墙钟耗时或频率加权工作量。
+尚未完成：广泛场景的可重复基线、帧卡顿分析、分析启动/下载阶段取消、跨系统取消及完整设备断连验收。采集宿主强杀与 TCP 拉取中断恢复已有有限验收，见 network-capture.md。指标不表示墙钟耗时或频率加权工作量。
+
+## 分析取消
+
+SDK `analyzePerfetto` 接受 `signal`；CLI 的中断控制器和 MCP `notifications/cancelled` 接入同一路径。调用前已取消时不启动 Python。运行中向该次分析的唯一取消文件写入请求，Python 监视请求并通过 Perfetto 的关闭接口回收自身创建的处理器；关闭与正常退出串行化。源 trace 保留，取消分析删除本次输出目录中的指标和报告，`analysis.json` 保存 `cancelled`、处理器 PID 与退出证据。无法确认回收时记录 `cancellation-unverified`；SDK 错误仅表示请求取消，最终状态以记录为准。
+
+Python 的协作期限为 110 秒，宿主执行期限为 120 秒。取消不会立刻强杀 Python；处理器尚未初始化时需等待初始化返回或期限结束。首次工具下载、初始化挂起、宿主硬终止及 Windows 控制台真实 Ctrl+C 仍需专项验收，不能把已运行处理器的回收证据扩大到这些窗口。调用方请求已完成后才送达的取消，也不改写已有正常完成结果。
+
+Windows 真实验证 `perfetto-cancellation-1790736192243/verification.json` 通过正常分析、预先取消，以及 SDK/MCP 在真实 Trace Processor 加载期间取消：取消前 Python 和处理器均存活，取消后两者均退出、无成功指标/报告，MCP 仍可列工具。使用重复 trace 包构造的较大输入仅用于延长真实解析窗口，不用于性能结论。早期验收脚本曾错误等待被取消 MCP 请求的响应；协议会抑制该响应，产品取消记录与退出证明保留在 `perfetto-cancellation-1790735857573`。修正后的首轮 `1790736038055` 和最终轮均通过。
+
+复验：`node scripts/verify-perfetto-cancellation.mjs <受控夹具trace> <perfetto-python>`。Linux CI 另验证 CLI 的真实 SIGINT；Windows 跳过这项并明确记录 `cliSignalVerified: false`。构建、268 项测试及四包干净安装/重装/卸载检查通过，最新 Python 清理确认分支已复验；跨版本迁移不在本次重装检查范围内。
 
 ## 固定工作量多次采样
 

@@ -6,7 +6,7 @@ const repository = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const destination = join(repository, 'packages/android/dist/runtime');
 await rm(destination, { recursive: true, force: true });
 await mkdir(destination, { recursive: true });
-for (const name of ['analyze-perfetto.py', 'capture-network.py', 'network-addon.py', 'network_finalization.py', 'proxy_recovery.py']) {
+for (const name of ['analyze-perfetto.py', 'perfetto_cancellation.py', 'capture-network.py', 'network-addon.py', 'network_finalization.py', 'proxy_recovery.py']) {
   await copyFile(join(repository, 'scripts', name), join(destination, name));
 }
 for (const name of ['core', 'android', 'cli', 'mcp']) {

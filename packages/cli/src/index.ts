@@ -188,7 +188,7 @@ async function dispatch(): Promise<void> {
     case 'record-interactions': await recordInteractions(args[0], args[1], args[2], args[3]); break;
     case 'analyze-perfetto': {
       if (!args[0] || !args[1]) throw new Error('Usage: analyze-perfetto <trace> <package> [python] [window-ms]');
-      printJson(await analyzePerfetto({ trace: args[0], packageName: args[1], ...(args[2] ? { python: args[2] } : {}), ...(args[3] ? { windowMs: Number(args[3]) } : {}) })); break;
+      printJson(await analyzePerfetto({ trace: args[0], packageName: args[1], signal: commandController.signal, ...(args[2] ? { python: args[2] } : {}), ...(args[3] ? { windowMs: Number(args[3]) } : {}) })); break;
     }
     case "perfetto": await perfetto(args[0], args[1]); break;
     case "proxy": await proxy(args[0], args[1]); break;

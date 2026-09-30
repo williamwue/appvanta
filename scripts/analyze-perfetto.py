@@ -6,11 +6,12 @@ import json
 from pathlib import Path
 import re
 import sys
+from perfetto_cancellation import AnalysisControl, controlled_processor
 
 SQL_VERSION = 'appvanta-sched-v1'
 
-def analyze(trace, package, output, scenario, window_ms=None, processor=None):
-    from perfetto.trace_processor import TraceProcessor, TraceProcessorConfig
+def analyze(trace, package, output, scenario, window_ms=None, processor=None, cancel_file=None):
+    from perfetto.trace_processor import TraceProcessorConfig
     if not re.fullmatch(r'[A-Za-z0-9_.]+', package):
         raise ValueError('Invalid package name')
     if window_ms is not None and window_ms < 1:
@@ -18,12 +19,24 @@ def analyze(trace, package, output, scenario, window_ms=None, processor=None):
     trace = Path(trace).resolve(strict=True)
     output = Path(output).resolve()
     output.mkdir(parents=True, exist_ok=False)
-    summary = {'version': 1, 'status': 'failed', 'trace': str(trace), 'traceSha256': hashlib.sha256(trace.read_bytes()).hexdigest(), 'packageName': package, 'queries': []}
+    summary = {'version': 1, 'status': 'failed', 'trace': str(trace), 'packageName': package, 'queries': []}
+    control = AnalysisControl(cancel_file, output)
     try:
-        with TraceProcessor(trace=str(trace), config=TraceProcessorConfig(bin_path=processor)) as tp:
+        digest = hashlib.sha256()
+        with trace.open('rb') as source:
+            while True:
+                control.check()
+                chunk = source.read(1024 * 1024)
+                if not chunk: break
+                digest.update(chunk)
+        summary['traceSha256'] = digest.hexdigest()
+        with controlled_processor(control, trace, TraceProcessorConfig(bin_path=processor)) as tp:
             def query(sql):
+                control.check()
                 summary['queries'].append(sql)
-                return [row.__dict__ for row in tp.query(sql)]
+                result = [row.__dict__ for row in tp.query(sql)]
+                control.check()
+                return result
             summary['processorVersion'] = tp.http.status().human_readable_version
             summary['pythonPackageVersion'] = importlib.metadata.version('perfetto')
             bounds = query('SELECT start_ts, end_ts FROM trace_bounds')[0]
@@ -98,6 +111,7 @@ FROM sched s JOIN thread t USING(utid) WHERE t.upid IN ({upids}) AND s.ts < {fin
                 summary['steps'] = step_rows
                 summary['stepMarkersSha256'] = hashlib.sha256(marker_file.read_bytes()).hexdigest()
             step_table = '' if not step_rows else '\n## Flow steps (full trace clock)\n\n| Step | Duration ms | Scheduled CPU ms |\n|---:|---:|---:|\n' + '\n'.join(f"| {r['index']} | {r['durationNs']/1000000:.3f} | {r['scheduledCpuNs']/1000000:.3f} |" for r in step_rows)
+            control.check()
             (output / 'metrics.json').write_text(json.dumps(measurement, indent=2), encoding='utf-8')
             rows = '\n'.join(f"| {r['pid']} | {r['tid']} | {str(r['name']).replace('|', '/')} | {r['scheduled_ns']/1000000:.3f} |" for r in threads)
             (output / 'report.md').write_text(f'''# AppVanta Perfetto analysis
@@ -117,11 +131,21 @@ FROM sched s JOIN thread t USING(utid) WHERE t.upid IN ({upids}) AND s.ts < {fin
 Only recorded scheduler execution is measured. This is not CPU frequency-weighted work, frame jank, or proof of a controlled workload. Step intervals, when present, use device trace markers and include observation, actions, checks and recovery; they are not isolated application latency. Step metrics use their full intervals, independently of the overall analysis window. Zero scheduled time is permitted only when process metadata and scheduling data exist. Build product identity is derived from the trace fingerprint.
 ''', encoding='utf-8')
     except Exception as error:
-        summary['status'] = 'failed'
+        summary['status'] = 'cancelled' if control.requested() else 'failed'
         summary['error'] = str(error)
         raise
     finally:
+        summary['cancellation'] = control.finish()
+        if summary['cancellation']['cleanupError'] or summary['cancellation']['processorExited'] is False:
+            summary['status'] = 'failed'
+        if summary['cancellation']['requested']:
+            summary['status'] = 'cancellation-unverified' if summary['cancellation']['cleanupError'] or summary['cancellation']['processorExited'] is False else 'cancelled'
+            for artifact in ['metrics.json', 'report.md']:
+                (output / artifact).unlink(missing_ok=True)
         (output / 'analysis.json').write_text(json.dumps(summary, indent=2), encoding='utf-8')
+    control.check()
+    if summary['status'] != 'passed':
+        raise RuntimeError('Perfetto processor cleanup unverified')
     return {'status': 'passed', 'output': str(output), 'metricsPath': str(output / 'metrics.json'), 'report': str(output / 'report.md')}
 
 if __name__ == '__main__':
@@ -132,10 +156,11 @@ if __name__ == '__main__':
     parser.add_argument('--scenario', default='uncontrolled-trace')
     parser.add_argument('--window-ms', type=int)
     parser.add_argument('--processor')
+    parser.add_argument('--cancel-file')
     args = parser.parse_args()
     if not args.scenario.strip(): parser.error('scenario must not be empty')
     try:
-        print(json.dumps(analyze(args.trace, args.package, args.output, args.scenario, args.window_ms, args.processor)))
+        print(json.dumps(analyze(args.trace, args.package, args.output, args.scenario, args.window_ms, args.processor, args.cancel_file)))
     except Exception as error:
         print(str(error), file=sys.stderr)
         sys.exit(1)
