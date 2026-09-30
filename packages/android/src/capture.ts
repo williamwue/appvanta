@@ -33,13 +33,15 @@ interface TransportError {
   readonly signal: string | null;
   readonly elapsedMs: number;
   readonly stderr?: string;
+  readonly stdout?: string;
 }
 
 function recordTransportError(errors: TransportError[], phase: TransportError['phase'], attempt: number, started: number, error: unknown): void {
-  const detail = error as NodeJS.ErrnoException & { killed?: boolean; signal?: string | null; stderr?: unknown };
+  const detail = error as NodeJS.ErrnoException & { killed?: boolean; signal?: string | null; stderr?: unknown; stdout?: unknown };
   errors.push({ phase, attempt, code: typeof detail?.code === 'string' || typeof detail?.code === 'number' ? detail.code : null,
     killed: detail?.killed === true, signal: detail?.signal ?? null, elapsedMs: Date.now() - started,
-    ...(typeof detail?.stderr === 'string' ? { stderr: detail.stderr.slice(0, 4096) } : {}) });
+    ...(typeof detail?.stderr === 'string' ? { stderr: detail.stderr.slice(0, 4096) } : {}),
+    ...(typeof detail?.stdout === 'string' ? { stdout: detail.stdout.slice(0, 4096) } : {}) });
 }
 
 async function probeOwnership(exec: (args: string[]) => Promise<string>, pid: string, remote: string, phase: TransportError['phase'], errors: TransportError[]): Promise<boolean> {

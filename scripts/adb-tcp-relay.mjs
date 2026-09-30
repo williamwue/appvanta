@@ -3,13 +3,15 @@ import { createServer, connect } from 'node:net';
 export async function createAdbTcpRelay(upstreamPort = 5037) {
   const sockets = new Set();
   const connections = [];
+  let sequence = 0;
   let offline = false;
   let pullTargets, interruptedPull;
   const relay = createServer(client => {
     if (offline) { client.destroy(); return; }
     const server = connect({ host: '127.0.0.1', port: upstreamPort });
-    const diagnostic = { receivedBytes: 0, responsePrefixHex: '', target: null, closed: false };
-    if (connections.length < 256) connections.push(diagnostic);
+    const diagnostic = { sequence: ++sequence, receivedBytes: 0, responsePrefixHex: '', target: null, closed: false };
+    if (connections.length === 256) connections.shift();
+    connections.push(diagnostic);
     server.on('error', error => { diagnostic.error = String(error); });
     server.on('close', () => { diagnostic.closed = true; });
     for (const socket of [client, server]) {

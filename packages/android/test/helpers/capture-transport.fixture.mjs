@@ -15,7 +15,7 @@ mock.module('node:child_process', { namedExports: {
         const operation = args[2];
         if (operation === 'pull') {
           scenario.pulls++;
-          if (scenario.pullFails) throw Object.assign(new Error('injected adb pull failure'), { code: 'ETIMEDOUT', killed: true, signal: 'SIGTERM', stderr: 'adb: protocol fault\n' + 'x'.repeat(5000) });
+          if (scenario.pullFails) throw Object.assign(new Error('injected adb pull failure'), { code: 'ETIMEDOUT', killed: true, signal: 'SIGTERM', stderr: 'adb: protocol fault\n' + 'x'.repeat(5000), stdout: 'adb: transfer failed\n' + 'y'.repeat(5000) });
           await writeFile(args[4], scenario.emptyPull || (scenario.emptyLogPull && args[3].endsWith('.log')) ? '' : 'nonempty artifact');
           if (scenario.abortOnPull) scenario.abortController.abort(new Error('injected cancellation during pull'));
           callback(null, { stdout: '', stderr: '' });
@@ -75,6 +75,7 @@ const assertPullError = (evidence, phase) => {
     { phase, attempt: 1, code: 'ETIMEDOUT', killed: true, signal: 'SIGTERM' });
   assert.ok(detail.elapsedMs >= 0);
   assert.equal(detail.stderr, ('adb: protocol fault\n' + 'x'.repeat(5000)).slice(0, 4096));
+  assert.equal(detail.stdout, ('adb: transfer failed\n' + 'y'.repeat(5000)).slice(0, 4096));
 };
 
 const assertMissingArtifact = (evidence, phase) => {

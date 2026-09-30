@@ -141,7 +141,7 @@ try {
   await writeFile(join(root, 'verification.json'), JSON.stringify({ status: 'passed', originalProxy, run: message.run, cancellation, disconnection, result, takeover, captures }, null, 2));
   console.log(JSON.stringify({ status: 'passed', root }));
 } catch (error) {
-  await writeFile(join(root, 'verification.json'), JSON.stringify({ status: 'failed', error: String(error), originalProxy, lease: await inspectDeviceLock(device) }, null, 2));
+  await writeFile(join(root, 'verification.json'), JSON.stringify({ status: 'failed', error: String(error), stdout: error.stdout, stderr: error.stderr, relay: relay?.diagnostics, interruptedPull: relay?.interruptedPull, originalProxy, lease: await inspectDeviceLock(device) }, null, 2));
   throw error;
 } finally {
   if (owner.exitCode === null && owner.signalCode === null) { owner.kill('SIGKILL'); await exited; }

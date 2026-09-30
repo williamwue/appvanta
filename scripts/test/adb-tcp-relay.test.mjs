@@ -4,6 +4,55 @@ import { createServer, connect } from 'node:net';
 import { once } from 'node:events';
 import { createAdbTcpRelay } from '../adb-tcp-relay.mjs';
 
+test('relay diagnostics retain the most recent bounded connections', async () => {
+  const sockets = new Set();
+  const upstream = createServer(socket => {
+    sockets.add(socket); socket.on('close', () => sockets.delete(socket)); socket.end('x');
+  });
+  upstream.listen(0, '127.0.0.1'); await once(upstream, 'listening');
+  const relay = await createAdbTcpRelay(upstream.address().port);
+  try {
+    for (let i = 0; i < 260; i++) {
+      const client = connect(Number(relay.environment.ADB_SERVER_SOCKET.split(':').at(-1)), '127.0.0.1');
+      try { const ended = once(client, 'end', { signal: AbortSignal.timeout(5000) }); client.resume(); await ended; }
+      finally { client.destroy(); }
+    }
+    assert.equal(relay.diagnostics.length, 256);
+    assert.equal(relay.diagnostics[0].sequence, 5);
+    assert.equal(relay.diagnostics.at(-1).sequence, 260);
+    assert.equal(relay.diagnostics.at(-1).receivedBytes, 1);
+  } finally {
+    await relay.close();
+    for (const socket of sockets) socket.destroy();
+    await new Promise(done => upstream.close(done));
+  }
+});
+
+test('relay drains the final upstream bytes before ending a slow client', async () => {
+  const payload = Buffer.alloc(8 * 1024 * 1024 + 123, 0xa5);
+  const sockets = new Set();
+  const upstream = createServer(socket => {
+    sockets.add(socket); socket.on('close', () => sockets.delete(socket));
+    socket.once('data', () => socket.end(payload));
+  });
+  upstream.listen(0, '127.0.0.1'); await once(upstream, 'listening');
+  const relay = await createAdbTcpRelay(upstream.address().port);
+  const client = connect(Number(relay.environment.ADB_SERVER_SOCKET.split(':').at(-1)), '127.0.0.1');
+  const chunks = []; client.on('data', chunk => chunks.push(chunk));
+  let timer;
+  try {
+    await once(client, 'connect'); client.pause();
+    const ended = once(client, 'end', { signal: AbortSignal.timeout(5000) });
+    client.write('request'); timer = setTimeout(() => client.resume(), 200);
+    await ended;
+    assert.deepEqual(Buffer.concat(chunks), payload);
+  } finally {
+    clearTimeout(timer); client.destroy(); await relay.close();
+    for (const socket of sockets) socket.destroy();
+    await new Promise(done => upstream.close(done));
+  }
+});
+
 test('targeted pull forwards a DONE response when there is no DATA frame', async () => {
   const sockets = new Set();
   const done = Buffer.from('444f4e4500000000', 'hex');
