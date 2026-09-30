@@ -4,12 +4,33 @@ import { once } from 'node:events';
 import { mkdir, readFile, readdir, writeFile, access } from 'node:fs/promises';
 import { resolve, join } from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
+import { createHash } from 'node:crypto';
+import { verifyEvidence } from '../packages/core/dist/archive.mjs';
 import { analyzePerfetto } from '../packages/android/dist/index.js';
 import { readMcpResponses } from './mcp-response-reader.mjs';
 
 const [sourceArgument, python, mode] = process.argv.slice(2); assert(sourceArgument && python, 'Specify controlled fixture trace and Perfetto Python executable');
-assert(mode === undefined || mode === 'sampling-result');
-let source = sourceArgument;
+assert(mode === undefined || mode === 'sampling-result' || mode === 'archive');
+let source = sourceArgument, sourceArchive;
+if (mode === 'archive') {
+  const integrity = await verifyEvidence(sourceArgument);
+  const manifest = JSON.parse(await readFile(join(sourceArgument, 'manifest.json'), 'utf8'));
+  const candidates = manifest.files.filter(file => /^perfetto-sampling-[0-9]+\/verification\.json$/.test(file.path));
+  assert.equal(candidates.length, 1, 'Expected exactly one controlled sampling run in archive');
+  const evidence = JSON.parse(await readFile(join(sourceArgument, candidates[0].path), 'utf8'));
+  assert.equal(evidence.status, 'passed'); assert.equal(evidence.scope, 'controlled-sampling-evidence');
+  assert.equal(evidence.cohorts.length, 2);
+  for (const cohort of evidence.cohorts) assert.equal(cohort.samples.length, 3);
+  const sample = evidence.cohorts[0].samples[0];
+  const name = sample.artifact.path.replaceAll('\\', '/').split('/').at(-1);
+  assert(/^trace-[0-9a-f-]{36}\.perfetto-trace$/.test(name), 'Invalid sampled trace filename');
+  const selected = `${candidates[0].path.split('/')[0]}/cohort-0-sample-0/${name}`;
+  assert(manifest.files.some(file => file.path === selected), 'Sample missing from archive manifest');
+  source = resolve(sourceArgument, selected);
+  const digest = createHash('sha256').update(await readFile(source)).digest('hex');
+  assert.equal(digest, sample.traceSha256);
+  sourceArchive = { integrity, verification: candidates[0].path, selected, sha256: digest, expectedMetrics: sample.measurement.metrics };
+}
 if (mode === 'sampling-result') {
   const sampling = JSON.parse(await readFile(sourceArgument, 'utf8'));
   assert.equal(sampling.status, 'passed');
@@ -18,9 +39,11 @@ if (mode === 'sampling-result') {
   source = evidence.cohorts[0].samples[0].artifact.path;
 }
 const root = resolve('.appvanta/runs', `perfetto-cancellation-${Date.now()}`); await mkdir(root, { recursive: true });
+if (sourceArchive) await writeFile(join(root, 'source-archive.json'), JSON.stringify(sourceArchive, null, 2));
 const options = { trace: resolve(source), python, packageName: 'dev.appvanta.performanceprobe', windowMs: 6000 };
 const normal = await analyzePerfetto(options);
 assert.equal(JSON.parse(await readFile(join(normal.output, 'analysis.json'), 'utf8')).status, 'passed');
+if (sourceArchive) assert.deepEqual(JSON.parse(await readFile(normal.metricsPath, 'utf8')).metrics, sourceArchive.expectedMetrics, 'Retained trace metrics must match the original device-run analysis');
 const pre = new AbortController(); pre.abort(new Error('Pre-cancelled'));
 await assert.rejects(analyzePerfetto({ ...options, python: 'must-not-run', signal: pre.signal }), /Pre-cancelled/);
 // Repeated packet bytes prolong real parser work; no metrics are asserted for this synthetic trace.

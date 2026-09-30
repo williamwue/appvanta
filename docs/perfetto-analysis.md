@@ -35,6 +35,10 @@ Windows `perfetto-initialization-1790738166778` 通过官方 downloader + 本地
 
 ## 当前验证与边界
 
+真实 trace 跨宿主验收已接入独立三系统 CI 任务，依赖同次 Android 任务成功。`verify-perfetto-cancellation.mjs <证据归档目录> <python> archive` 先核验整个 manifest、大小和摘要，只接受唯一完整成功的两组六次采样，选定 trace 后再与采样记录核对摘要；各宿主重算的指标必须与原始分析逐项一致，然后实际执行 SDK/MCP 加载期取消，Linux/macOS 另执行 CLI SIGINT。源归档证明保存在 `source-archive.json`，不会按归档中的绝对机器路径读取文件。
+
+Windows `perfetto-cancellation-1790740241660` 使用已核验的 API 35 归档通过重算与取消；失败采样归档 `36662397215` 在分析前被拒绝。CI YAML 解析及源码策略检查通过。新矩阵尚待托管运行，不据此提前标记 macOS 解析期或 CLI 信号已验收。
+
 当前取消验收矩阵（具体运行见下文；历史段落中的“待验收”只代表当时检查时点）：
 
 | 取消阶段/入口 | Windows | Linux | macOS |
