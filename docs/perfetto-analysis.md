@@ -35,6 +35,10 @@ Windows `perfetto-initialization-1790738166778` 通过官方 downloader + 本地
 
 ## 当前验证与边界
 
+MCP 下载期取消：Windows `perfetto-initialization-1790739074311` 同时通过 SDK 与真实 MCP stdio 客户端。收到 `notifications/cancelled` 后，分析 Python、解析器和 curl 均停止，处理器未启动、无成功指标/报告；MCP 抑制被取消请求的响应，并继续处理 `tools/list`。客户端验证现独立于 Python HTTP 夹具，三系统 CI 自动运行 SDK/MCP 两种客户端。首次重构验证误将 `.cancel` 文件计作分析目录，修正为只检查目录后通过；它不是产品取消失败。此 MCP 场景仍待 Linux/macOS 托管结果，不替代服务器启动期间或硬终止验收。
+
+SDK 下载期取消的三系统验收现已完成：CI `36664032094` 主机任务全部通过，每个平台各 26 个文件大小/SHA-256 核验通过。Windows `perfetto-initialization-1790738770620`、Linux `1790738602011`、macOS `1790738593691` 均从 SDK 发起真实分析，在官方 downloader 访问本地停滞 HTTP 夹具后触发 AbortSignal；确认分析 Python、解析器、curl 停止，分析 cancelled，处理器未启动且无成功指标/报告。归档位于 `.appvanta/ci-36664032094-{windows,ubuntu,macos}`。该证据覆盖 SDK 下载阶段，未覆盖 MCP 下载期、处理器服务器启动期或公网断网，整项 Perfetto 验收仍未完成。
+
 下载取消跨系统证据：CI `36663758987` 的 Windows/Linux/macOS 三个主机任务通过，每个平台各 21 个归档文件已校验大小及 SHA-256。Windows `perfetto-initialization-1790738492512`、Linux `1790738376530`、macOS `1790738371982` 均验证官方 downloader 在本地 HTTP 停滞后取消，解析器及 curl 停止、无已完成缓存。该快照不包含后续 SDK 下载期取消扩展，不能据此扩大为全部初始化阶段或公网断网验收。
 
 托管证据补充：公开 `6f08fd5` 的 CI `36661266279` 四项任务全部通过，设备归档 `.appvanta/ci-36661266279/.appvanta/ci-evidence` 的 3342 个文件已逐一核验大小和 SHA-256。Linux `perfetto-cancellation-1790737583825` 验证真实处理器加载期间 SDK、MCP、CLI 取消，观测耗时分别为 21/54/50 ms；CLI 使用真实 SIGINT、退出码 1，三者均确认 Python/处理器退出、无成功指标及报告，MCP 后续仍可列工具。该快照不含后续收尾竞态修正，不能替代其托管验证。Windows 控制台信号、macOS 和初始化/下载阶段仍待验收。

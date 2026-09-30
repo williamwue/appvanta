@@ -110,49 +110,12 @@ try:
                 'cancellation': result, 'downloadPid': child, 'downloadStopped': True}
     (root / 'http-entered').unlink()
     (root / 'input.trace').write_bytes(b'initialization-only: never parsed')
-    sdk_code = '''
-import assert from 'node:assert/strict';
-import {readFile, access} from 'node:fs/promises';
-import {join} from 'node:path';
-import {setTimeout as delay} from 'node:timers/promises';
-import {analyzePerfetto} from './packages/android/dist/index.js';
-const [root,python]=process.argv.slice(1), controller=new AbortController();
-let finished=false;
-const pending=analyzePerfetto({trace:join(root,'input.trace'),packageName:'dev.appvanta.fixture',python,signal:controller.signal})
-  .then(value=>({value}),error=>({error:String(error)})).finally(()=>{finished=true;});
-let entered=false;
-try {
-  const deadline=Date.now()+15000;
-  while(Date.now()<deadline && !finished) {
-    try { await access(join(root,'http-entered')); entered=true; break; } catch {}
-    await delay(10);
-  }
-} finally { controller.abort(new Error('Cancel SDK during actual tool download')); }
-const response=await pending;
-assert(entered,'SDK downloader did not reach HTTP checkpoint');
-assert.match(response.error,/cancellation requested/);
-const output=/diagnostic directory: (.*?);/.exec(response.error)?.[1]; assert(output);
-const summary=JSON.parse(await readFile(join(output,'analysis.json'),'utf8'));
-assert.equal(summary.status,'cancelled');
-assert.equal(summary.cancellation.resolverExited,true);
-assert.equal(summary.cancellation.processorPid,null);
-assert.equal(summary.cancellation.cleanupError,null);
-for(const name of ['metrics.json','report.md','processor.json']) await assert.rejects(access(join(output,name)));
-const init=JSON.parse(await readFile(join(output,'initialization.json'),'utf8'));
-const child=JSON.parse(await readFile(join(root,'child.json'),'utf8'));
-for(const pid of [init.analysisPid,init.pid,child.pid]) {
-  let zombie=false;
-  if(process.platform==='linux') {
-    try { zombie=(await readFile(`/proc/${pid}/stat`,'utf8')).split(') ')[1].startsWith('Z '); } catch {}
-  }
-  if(!zombie) assert.throws(()=>process.kill(pid,0),{code:'ESRCH'});
-}
-console.log(JSON.stringify({status:'passed',output,initialization:init,cancellation:summary.cancellation,downloadPid:child.pid}));
-'''
-    sdk = subprocess.run(['node', '--input-type=module', '-e', sdk_code, str(root), sys.executable],
-                         env={**os.environ, **env}, capture_output=True, text=True, timeout=30)
-    assert sdk.returncode == 0, sdk.stdout + sdk.stderr
-    evidence['sdk'] = json.loads(sdk.stdout)
+    for client in ['sdk', 'mcp']:
+        (root / 'http-entered').unlink(missing_ok=True)
+        checked = subprocess.run(['node', 'scripts/verify-perfetto-initialization-client.mjs', str(root), sys.executable, client],
+                                 env={**os.environ, **env}, capture_output=True, text=True, timeout=45)
+        assert checked.returncode == 0, checked.stdout + checked.stderr
+        evidence[client] = json.loads(checked.stdout)
     (root / 'verification.json').write_text(json.dumps(evidence, indent=2))
     print(json.dumps(evidence))
 finally:
