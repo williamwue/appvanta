@@ -156,7 +156,10 @@ jobs:
           "$adb" devices -l
       - name: Verify AVD startup wait cancellation
         timeout-minutes: 2
-        run: node scripts/verify-avd-cancellation.mjs appvanta-ci emulator-5554
+        run: |
+          node scripts/verify-avd-cancellation.mjs appvanta-ci emulator-5554 sdk
+          node scripts/verify-avd-cancellation.mjs appvanta-ci emulator-5554 mcp
+          node scripts/verify-avd-cancellation.mjs appvanta-ci emulator-5554 cli
       - name: Download pinned Markor APK
         shell: bash
         run: |

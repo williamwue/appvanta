@@ -27,7 +27,7 @@ node packages/cli/dist/index.js start-avd AppVanta_Verification_API37 5554 12000
 
 超时返回 boot-timeout，CLI 非零退出，保留进程和日志；应先查看 adb devices 及启动记录，不应盲目重试。SDK `startAndroidAvd(name, port, timeoutMs, gpu, signal)`、CLI 中断信号和 MCP 请求取消现可停止启动等待：中断 AVD 枚举/ADB 探测及轮询，在启动记录已建立时保存 `cancelled`，释放启动锁。取消不会终止已启动或复用的模拟器；需要停止设备时应先核对身份再显式操作。启动前取消不会创建实例。记录在启动进程退出后不会由后台监控持续更新。
 
-Windows/API 37 `avd-cancellation-1790741502527` 已验证 SDK 复用正在运行的 AVD，在 `starting` 记录出现后取消，7 ms 返回；记录为 cancelled，两层锁释放、boot ID 未变、设备仍 ready，随后再次调用成功复用。自动夹具另覆盖新建进程、复用探测和轮询间隔取消。真实冷启动取消、CLI 控制台中断、MCP 通知取消及 Linux/macOS 动态验证仍待完成，不能用夹具代替设备证明。托管 API 35 已接入复用取消脚本，结果待新 CI。
+Windows/API 37 `avd-cancellation-1790741502527` 已验证 SDK 复用正在运行的 AVD，在 `starting` 记录出现后取消，7 ms 返回；记录为 cancelled，两层锁释放、boot ID 未变、设备仍 ready，随后再次调用成功复用。后续真实 MCP stdio `avd-cancellation-1790741748202` 在同一窗口发送 `notifications/cancelled`，15 ms 确认取消及锁释放；被取消请求的响应被抑制，后续 `tools/list` 成功，设备身份与再次复用检查通过。同轮 SDK `1790741748876` 回归通过（8 ms）。自动夹具另覆盖新建进程、复用探测和轮询间隔取消。真实冷启动取消、CLI 控制台中断及 Linux/macOS 动态验证仍待完成，不能用夹具代替设备证明。托管 API 35 已接入 SDK/MCP 及 POSIX CLI SIGINT 复用取消脚本，结果待新 CI；Windows 控制台信号没有用进程终止模拟验收。
 
 本机真实重启验收：`node scripts/verify-avd-start.mjs AppVanta_Verification_API37 5554`，证据 `.appvanta/runs/avd-start-1790426543011/verification.json`。启动约 29 秒后 ready，再次调用复用原实例；模拟器保持运行供后续验证。AVD 创建、SDK 安装、超时/取消故障验收及 Linux/macOS 启动仍待完成。
 # 模拟器图形后端
