@@ -43,3 +43,7 @@ node scripts/verify-multi-share-probe.mjs emulator-5554
 产品验收：.appvanta/runs/share-helper-1790727695741/verification.json 在 API 37 通过 helper 持久回执、准备进程丢失后拒绝续接/重建、取消不交付，以及已交付 operation 重复请求拒绝；旧回执逐字节保持不变。同次真实 CLI run-flow 和 MCP run_flow 均用 share-files 完成双附件交付，接收应用核对两份不同内容的 4096 字节及摘要、URI 顺序和只读权限。源码构建和完整 261 项回归通过（core127、Android94、脚本40）。模拟发送响应丢失的宿主回归验证不重复 dispatch，不代表实际宿主在所有指令窗口强杀已验收。API 35 产品 helper 步骤已加入 CI，尚待对应修订结果。
 
 实际分享进程强杀：.appvanta/runs/share-helper-1790728046188/verification.json 在 API 37 通过两个窗口。第一项准备回执已落盘、第二项尚未执行时，实际执行 shareFiles 的子进程被 SIGKILL，随后读取 prepared 回执并显式取消，接收端无交付。第二个窗口在 Android 已保存 dispatched、真实接收内容已形成，但 ADB 执行回调尚未返回给 shareFiles 时 SIGKILL；宿主只有 dispatch-intent、没有 dispatched/failure 文件，设备回执确认发送，重复 operation 被拒绝且回执未变化。同次 CLI/MCP 正常双附件流程仍通过。父验证进程持续持有设备锁，因此此证据不证明整个 Flow 租约所有者退出或所有宿主/Activity 崩溃窗口。
+
+系统选择器修复与验收：API 37 英文环境的 `.appvanta/runs/share-helper-1790729412544/verification.json` 通过取消无交付、重新打开并选择接收应用、两项内容摘要及只读授权检查，连同 CLI/MCP、两种宿主强杀和三种只读回执查询均通过，测试文件已清理且租约为空。helper 现在在无显式目标包时等待 Activity result 再结束，避免系统选择器尚未完成转授就撤销临时授权。取消后回执仍为 `dispatched`，明确证明启动回执不等同实际交付。
+
+修复前运行 `share-helper-1790728979917` 在点击 `Just once` 后未启动接收应用；logcat 明确记录 helper UID 无权转授来源 URI。修复后首次运行 `share-helper-1790729203283` 已实际收到正确内容，但测试将系统附加的 Activity 启动标志与直接启动完全比较而失败；改为逐位要求 READ 且禁止 WRITE、PERSISTABLE、PREFIX，保留完整原始标志。两次失败及具名文件清理记录保留，未当作通过。其他语言、多 provider、数量上限、接收 Activity 未返回前再次分享及 OEM 仍待验收。

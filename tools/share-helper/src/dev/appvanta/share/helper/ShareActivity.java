@@ -18,6 +18,10 @@ public final class ShareActivity extends Activity {
     private final ArrayList<Uri> uris = new ArrayList<>();
     public void onCreate(Bundle saved) { super.onCreate(saved); accept(getIntent()); }
     public void onNewIntent(Intent intent) { super.onNewIntent(intent); accept(intent); }
+    protected void onActivityResult(int requestCode, int resultCode, Intent data) {
+        super.onActivityResult(requestCode, resultCode, data);
+        if (requestCode == 1) finish();
+    }
     private void accept(Intent incoming) {
         String requested = incoming.getStringExtra("operation");
         try {
@@ -71,9 +75,10 @@ public final class ShareActivity extends Activity {
         for (int i = 1; i < uris.size(); i++) clip.addItem(new ClipData.Item(uris.get(i)));
         send.setClipData(clip); send.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION);
         record("dispatching");
-        startActivity(send);
+        if (destination == null) startActivityForResult(send, 1);
+        else startActivity(send);
         record("dispatched");
-        finish();
+        if (destination != null) finish();
     }
     private void record(String state) throws Exception { receipt.put("state", state); Receipts.save(this, operation, receipt); }
     private void show(String message) { TextView view = new TextView(this); view.setText(message); setContentView(view); }

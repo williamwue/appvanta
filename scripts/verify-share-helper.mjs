@@ -6,7 +6,7 @@ import { promisify } from 'node:util';
 import { mkdir, writeFile, readFile, readdir } from 'node:fs/promises';
 import { resolve, join } from 'node:path';
 import { withDeviceLock, inspectDeviceLock } from '../packages/core/dist/index.js';
-import { AdbDriver } from '../packages/android/dist/index.js';
+import { AdbDriver, runAndroidFlow, parseUiTree } from '../packages/android/dist/index.js';
 import { readMcpResponses } from './mcp-response-reader.mjs';
 import { verifyShareReceiptClients } from './verify-share-receipt-clients.mjs';
 
@@ -138,11 +138,43 @@ try {
       { description: 'Receiver delivery', assertText: 'received' },
     ] };
     const flowPath = join(directory, 'flow.json'); await writeFile(flowPath, JSON.stringify(flow));
-    for (const transport of ['cli', 'mcp']) {
+    for (const transport of ['cli', 'mcp', 'resolver-cancel', 'resolver']) {
       await withDeviceLock(device, async () => { await driver.stopApp(device, receiver); await adb('shell', 'run-as', receiver, 'rm', '-f', 'files/received.json'); });
       let result;
       if (transport === 'cli') result = JSON.parse((await promisify(execFile)(process.execPath, ['packages/cli/dist/index.js', 'run-flow', device, flowPath], { encoding: 'utf8', windowsHide: true, timeout: 120000 })).stdout);
-      else {
+      else if (transport.startsWith('resolver')) {
+        const choice = { kind: 'text', value: 'AppVanta Share Receiver', match: 'exact' };
+        const justOnce = { kind: 'text', value: 'Just once', match: 'exact' };
+        const { packageName, ...unaddressed } = flow.steps[0].action;
+        result = await runAndroidFlow(device, { name: `Multi-attachment ${transport}`, steps: [
+          { description: 'Open multiple attachment resolver', action: unaddressed },
+          { description: 'Verify system receiver choice', assertText: choice.value },
+          ...(transport === 'resolver-cancel' ? [
+            { description: 'Dismiss without delivering', action: { kind: 'back' } },
+            { description: 'Source visible after dismissal', assertText: 'AppVanta Share Source' },
+          ] : [
+            { description: 'Select test receiver', when: { kind: 'target-visible', target: choice }, action: { kind: 'tap', target: choice } },
+            { description: 'Use just once', when: { kind: 'target-visible', target: justOnce }, action: { kind: 'tap', target: justOnce } },
+            { description: 'Receiver content available', assertText: 'received' },
+          ]),
+        ] });
+        assert.equal(result.status, 'passed');
+        const xml = result.steps[1].evidence.find(path => path.endsWith('.xml'));
+        const nodes = parseUiTree(await readFile(join(result.runDirectory, xml), 'utf8')).nodes;
+        assert(nodes.some(node => [choice.value, `Share with ${choice.value}`].includes(node.text) && ['android', 'com.android.intentresolver'].includes(node.packageName)), 'Receiver choice must belong to Android resolver');
+        const requests = (await readdir(result.runDirectory, { recursive: true })).filter(path => /share-[a-f0-9-]+-request\.json$/.test(path));
+        assert.equal(requests.length, 1);
+        const request = JSON.parse(await readFile(join(result.runDirectory, requests[0]), 'utf8'));
+        const inspected = await driver.inspectAttachmentShare(device, request.operation);
+        assert.equal(inspected.receipt.state, 'dispatched');
+        assert.deepEqual(inspected.receipt.uris, uris);
+        assert.equal(inspected.receipt.packageName, undefined);
+        if (transport === 'resolver-cancel') {
+          await noDelivery();
+          product.push({ transport, result, receipt: inspected, delivered: false });
+          continue;
+        }
+      } else {
         const child = spawn(process.execPath, ['packages/mcp/dist/index.js'], { windowsHide: true, stdio: ['pipe', 'pipe', 'pipe'] });
         const exited = once(child, 'exit'); let stderr = ''; child.stderr.on('data', bytes => { stderr += bytes; });
         try {
@@ -157,10 +189,15 @@ try {
       }
       assert.equal(result.status, 'passed');
       const delivered = JSON.parse(await adb('exec-out', 'run-as', receiver, 'cat', 'files/received.json'));
-      assert.deepEqual(delivered.items, expectedReport.items); assert.equal(delivered.status, 'received'); assert.equal(delivered.clipCount, 2);
+      if (transport === 'resolver') {
+        assert.deepEqual(delivered.items.map(({ flags, ...item }) => item), expectedReport.items.map(({ flags, ...item }) => item));
+        for (const item of delivered.items) assert.equal(item.flags & 0xc3, 1, 'Require READ without WRITE, PERSISTABLE or PREFIX grants');
+      } else assert.deepEqual(delivered.items, expectedReport.items);
+      assert.equal(delivered.status, 'received'); assert.equal(delivered.clipCount, 2);
       product.push({ transport, result, report: delivered });
     }
   await withDeviceLock(device, async () => {
+    await driver.stopApp(device, helper);
     await driver.stopApp(device, receiver); await adb('shell', 'run-as', receiver, 'rm', '-f', 'files/received.json');
     for (const token of tokens) {
       await driver.stopApp(device, source);
