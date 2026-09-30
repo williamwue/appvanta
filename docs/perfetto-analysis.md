@@ -64,6 +64,14 @@ API 37 证据 `perfetto-sampling-1790735058035/verification.json`：6 条 trace 
 
 第一次夹具尝试未处理 `adb exec-out` 返回的缺失文件文本，第二次的短命线程未出现在调度明细；失败证据分别保留在 `perfetto-sampling-1790734927418`、`perfetto-sampling-1790734954565`。修正为显式文件存在检查、持久线程及设备时钟标记后通过采样验收。失败尝试的具名回执已归档并从测试应用删除，设备租约已释放。API 35 CI 已加入该协议，托管结果待核验。
 
+## 采样传输诊断
+
+托管运行 `36659987371` 的三系统任务通过，但 API 35 在第一条采样 trace 的 `adb pull` 返回 1，stdout/stderr 均为空，采样未完成，不能归因为基线比较失败。设备端产物按现有规则保留。采样验证现保存 `adb-transport.json`，包含有界 `track-devices -l` 事件、开始/结束的 boot ID、adbd PID 及结束日志，以定位连接变化；不自动重试失败采样或放宽比较条件。
+
+API 37 的独立设备端重连验证 `adb-transport-observer-1790736748972` 已确认 transport ID 从 1 变为 2，同时 boot ID 和 adbd PID 保持不变，观测进程退出且租约释放。这证明连接身份变化本身不等于设备或 adbd 重启，尚不能解释托管拉取失败，也不代表 USB 或 OEM 验收。
+
+接入观测后的 API 37 复验 `perfetto-sampling-1790737088705` 完成 6 条 trace，两组 CPU 中位数为 13.661 ms 和 13.674 ms，本轮比较通过；tracker 已退出，事件无丢弃。它与早先比较失败的运行共同保留，不能用单轮通过替代稳定性验收。
+
 ## Flow 步骤的设备时间关联
 
 分析器自动读取 trace 同目录的 `step-markers.json`，用唯一运行 token 查找 counter 事件，并严格核对开始/结束配对。缺少、重复、错序或不匹配会失败，不会输出指标。没有 sidecar 的独立 trace 不声称具备步骤关联。

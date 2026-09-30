@@ -3,6 +3,7 @@ import { spawn, execFileSync, execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { createAdbTcpRelay } from './adb-tcp-relay.mjs';
 import { probeCaptureTransfer } from './capture-transfer-probe.mjs';
+import { observeAdbTransport } from './adb-transport-observer.mjs';
 import { once } from 'node:events';
 import { createHash } from 'node:crypto';
 import { mkdir, readFile, readdir, writeFile, stat } from 'node:fs/promises';
@@ -26,6 +27,9 @@ const flow = { name: 'Interrupted network and captures', network: { python: 'pyt
 const code = `import {runAndroidFlow} from ${JSON.stringify(new URL('../packages/android/dist/index.js', import.meta.url).href)};
 let run;const result=await runAndroidFlow(${JSON.stringify(device)},${JSON.stringify(flow)},undefined,async root=>{run=root;},{drain:async()=>[],finish:async()=>{},beforeStep:async()=>{process.send({run});await new Promise(()=>setInterval(()=>{},1000));}});throw new Error(JSON.stringify(result));`;
 const relay = tcpDisconnect ? await createAdbTcpRelay() : undefined;
+let transportObserver;
+try { transportObserver = await observeAdbTransport(device, root, process.env.ADB_PATH ?? 'adb'); }
+catch (error) { await relay?.close(); throw error; }
 const owner = spawn(process.execPath, ['--input-type=module', '-e', code], { windowsHide: true, ...(relay ? { env: relay.environment } : {}), stdio: ['ignore', 'ignore', 'pipe', 'ipc'] });
 const exited = once(owner, 'exit'); let stderr = ''; owner.stderr.on('data', data => { stderr += data; });
 let sourceRun;
@@ -151,6 +155,7 @@ try {
   console.log(JSON.stringify({ status: 'passed', root }));
 } catch (error) {
   await writeFile(join(root, 'verification.json'), JSON.stringify({ status: 'failed', error: String(error), stdout: error.stdout, stderr: error.stderr, relay: relay?.diagnostics, interruptedPull: relay?.interruptedPull, originalProxy, lease: await inspectDeviceLock(device) }, null, 2));
+  await transportObserver.snapshot('failure', true);
   if (sourceRun && relay) {
     try {
       for (const name of (await readdir(join(sourceRun, 'captures'))).filter(name => name.endsWith('.capture.json'))) {
@@ -166,4 +171,5 @@ try {
 } finally {
   if (owner.exitCode === null && owner.signalCode === null) { owner.kill('SIGKILL'); await exited; }
   await relay?.close();
+  try { await transportObserver.snapshot('after'); } finally { await transportObserver.stop(); }
 }

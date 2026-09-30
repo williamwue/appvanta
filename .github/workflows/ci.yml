@@ -235,6 +235,9 @@ jobs:
       - name: Verify interrupted Perfetto pull recovery
         timeout-minutes: 4
         run: node scripts/verify-network-capture-recovery.mjs emulator-5554 tcp-pull-trace-disconnect
+      - name: Verify device-side ADB reconnect observation
+        timeout-minutes: 2
+        run: node scripts/verify-adb-transport-observer.mjs emulator-5554
       - name: Verify controlled Perfetto sampling
         timeout-minutes: 5
         shell: bash

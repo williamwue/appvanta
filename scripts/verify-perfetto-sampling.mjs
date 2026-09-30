@@ -8,6 +8,7 @@ import { setTimeout as delay } from 'node:timers/promises';
 import { withDeviceLock, inspectDeviceLock, parsePerformanceDocument, checkPerformanceBaseline } from '../packages/core/dist/index.js';
 import { analyzePerfetto } from '../packages/android/dist/index.js';
 import { captureArtifact } from '../packages/android/dist/capture.js';
+import { observeAdbTransport } from './adb-transport-observer.mjs';
 
 const [device, python] = process.argv.slice(2); assert(device && python, 'Specify device and Perfetto Python executable');
 const root = resolve('.appvanta/runs', `perfetto-sampling-${Date.now()}`); await mkdir(root, { recursive: true });
@@ -20,6 +21,7 @@ let expected = 0x12345678;
 for (let i = 0; i < iterations; i++) { expected ^= expected << 13; expected ^= expected >>> 17; expected ^= expected << 5; }
 const adb = async (...args) => (await promisify(execFile)(process.env.ADB_PATH ?? 'adb', ['-s', device, ...args], { windowsHide: true, encoding: 'utf8', timeout: 20000 })).stdout;
 const results = [], cohorts = [];
+let transportObserver;
 async function workload() {
   const id = randomUUID();
   await adb('shell', 'am', 'start', '-W', '-n', `${pkg}/.PerformanceActivity`, '--es', 'runId', id, '--ei', 'iterations', String(iterations));
@@ -42,6 +44,7 @@ async function workload() {
 }
 try {
   await withDeviceLock(device, async () => {
+    transportObserver = await observeAdbTransport(device, root, process.env.ADB_PATH ?? 'adb');
     await adb('install', '-r', apk);
     for (let cohort = 0; cohort < 2; cohort++) {
       await adb('shell', 'am', 'force-stop', pkg);
@@ -103,4 +106,9 @@ try {
   console.log(JSON.stringify({ status: 'passed', root, comparison }));
 } catch (error) {
   await writeFile(join(root, 'verification.json'), JSON.stringify({ status: 'failed', error: String(error), apkSha256, results, cohorts, lease: await inspectDeviceLock(device) }, null, 2)); throw error;
+} finally {
+  if (transportObserver) {
+    try { await transportObserver.snapshot('sampling-finished', true); }
+    finally { await transportObserver.stop(); }
+  }
 }
