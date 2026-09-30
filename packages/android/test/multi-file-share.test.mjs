@@ -27,6 +27,10 @@ for (const scenario of ['success', 'wrong-receipt', 'lost-dispatch-response']) t
     if (scenario === 'success') await shareFiles(action, directory, execute, execute);
     else await assert.rejects(shareFiles(action, directory, execute, execute), /Multi-attachment share failed/);
     const dispatches = commands.filter(args => args.includes('dispatch'));
+    const isolated = commands.filter(args => args.includes('-f'));
+    assert.equal(isolated.length, 1);
+    assert.equal(isolated[0][isolated[0].indexOf('-f') + 1], '0x18000000');
+    assert.equal(isolated[0][isolated[0].indexOf('index') + 1], '0');
     assert.equal(dispatches.length, scenario === 'wrong-receipt' ? 0 : 1);
     assert.equal(commands.filter(args => args.includes('cancel')).length, scenario === 'wrong-receipt' ? 1 : 0);
     const files = await readdir(directory);

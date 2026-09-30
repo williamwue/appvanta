@@ -138,8 +138,12 @@ try {
       { description: 'Receiver delivery', assertText: 'received' },
     ] };
     const flowPath = join(directory, 'flow.json'); await writeFile(flowPath, JSON.stringify(flow));
-    for (const transport of ['cli', 'mcp', 'resolver-cancel', 'resolver']) {
-      await withDeviceLock(device, async () => { await driver.stopApp(device, receiver); await adb('shell', 'run-as', receiver, 'rm', '-f', 'files/received.json'); });
+    const resolverReceipts = [];
+    for (const transport of ['cli', 'mcp', 'resolver-cancel', 'resolver', 'resolver-repeat']) {
+      await withDeviceLock(device, async () => {
+        if (transport !== 'resolver-repeat') await driver.stopApp(device, receiver);
+        await adb('shell', 'run-as', receiver, 'rm', '-f', 'files/received.json');
+      });
       let result;
       if (transport === 'cli') result = JSON.parse((await promisify(execFile)(process.execPath, ['packages/cli/dist/index.js', 'run-flow', device, flowPath], { encoding: 'utf8', windowsHide: true, timeout: 120000 })).stdout);
       else if (transport.startsWith('resolver')) {
@@ -169,6 +173,8 @@ try {
         assert.equal(inspected.receipt.state, 'dispatched');
         assert.deepEqual(inspected.receipt.uris, uris);
         assert.equal(inspected.receipt.packageName, undefined);
+        for (const previous of resolverReceipts) assert.deepEqual(await driver.inspectAttachmentShare(device, previous.receipt.operation), previous);
+        resolverReceipts.push(inspected);
         if (transport === 'resolver-cancel') {
           await noDelivery();
           product.push({ transport, result, receipt: inspected, delivered: false });
@@ -189,7 +195,7 @@ try {
       }
       assert.equal(result.status, 'passed');
       const delivered = JSON.parse(await adb('exec-out', 'run-as', receiver, 'cat', 'files/received.json'));
-      if (transport === 'resolver') {
+      if (transport.startsWith('resolver')) {
         assert.deepEqual(delivered.items.map(({ flags, ...item }) => item), expectedReport.items.map(({ flags, ...item }) => item));
         for (const item of delivered.items) assert.equal(item.flags & 0xc3, 1, 'Require READ without WRITE, PERSISTABLE or PREFIX grants');
       } else assert.deepEqual(delivered.items, expectedReport.items);

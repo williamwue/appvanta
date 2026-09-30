@@ -41,6 +41,8 @@ adb -s emulator-5554 install -r .appvanta/share-helper/appvanta-share-helper.apk
 
 未指定目标包时，helper 通过 Activity result 等待系统选择器及接收 Activity 返回后再结束，以保留选择期间的临时 URI 读取授权。立即结束 helper 会使该授权失效：API 37 曾在点击 `Just once` 时明确拒绝转授，接收应用未启动。显式目标包仍在启动返回后结束 helper。选择器取消不会把 `dispatched` 改为 `cancelled`；两者分别表示已发起 Android 启动和在发送前取消准备，不能混为接收端交付状态。
 
+每个新 operation 的首次准备创建独立 Activity 任务，避免接收界面尚未返回时再次分享进入旧 helper 操作；同一 operation 的后续准备继续复用前台实例。API 37 已验证连续两次通过选择器接收及旧回执不变，见 `share-helper-1790730614350`。这不授权重放旧 operation，也不保证多宿主并行分享。
+
 宿主在运行的 artifacts 目录保存请求、观察到的回执、逐项准备回执及发送意图。请求与回执不匹配时停止；发送前失败会尝试取消准备。已尝试发送后响应丢失则保留不确定结果，不自动发送第二次。独立的新调用会生成新的 operation，因此再次手动执行仍可能重复交付，不能把这套记录视为跨调用的 exactly-once 保证。helper 回执保留在应用私有目录，可经 `adb exec-out content read --uri content://dev.appvanta.share.helper/operations/<operation>` 查询；尚无回执自动回收策略。
 
 响应丢失后，可通过 CLI 查询已有 operation：

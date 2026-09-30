@@ -65,7 +65,7 @@ export async function shareFiles(input: Share, directory: string, execute: Execu
   let dispatchAttempted = false, prepared = 0;
   try {
     for (const [index, uri] of action.uris.entries()) {
-      await execute([...command('prepare'), '--ei', 'index', String(index), '--ei', 'count', String(action.uris.length), '--es', 'mimeType', quote(action.mimeType),
+      await execute([...command('prepare'), ...(index === 0 ? ['-f', '0x18000000'] : []), '--ei', 'index', String(index), '--ei', 'count', String(action.uris.length), '--es', 'mimeType', quote(action.mimeType),
         ...(action.packageName ? ['--es', 'targetPackage', action.packageName] : []), '-d', quote(uri), '--grant-read-uri-permission']);
       const raw = await execute(read);
       await save(`observed-${index}`, { bytes: Buffer.byteLength(raw, 'utf8'), raw: raw.slice(0, 131072) });

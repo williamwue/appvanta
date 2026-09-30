@@ -49,3 +49,7 @@ node scripts/verify-multi-share-probe.mjs emulator-5554
 修复前运行 `share-helper-1790728979917` 在点击 `Just once` 后未启动接收应用；logcat 明确记录 helper UID 无权转授来源 URI。修复后首次运行 `share-helper-1790729203283` 已实际收到正确内容，但测试将系统附加的 Activity 启动标志与直接启动完全比较而失败；改为逐位要求 READ 且禁止 WRITE、PERSISTABLE、PREFIX，保留完整原始标志。两次失败及具名文件清理记录保留，未当作通过。其他语言、多 provider、数量上限、接收 Activity 未返回前再次分享及 OEM 仍待验收。
 
 后续数量上限验收：API 37 的 `.appvanta/runs/share-limit-1790729724602/verification.json` 通过正式 CLI Flow 一次发送 16 项。独立接收应用核对 16 个 URI 的顺序、每项 4096 字节及不同的预期 SHA-256、16 项 ClipData、读取授权和写入拒绝；URI 授权位仅允许 READ。产品回执包含相同 16 个 URI 且状态为 `dispatched`。所有来源文件已逐项撤销并删除，设备租约为空。该证据限于同一测试 provider、`application/octet-stream` 和显式接收应用。复验命令为 `node scripts/verify-share-limit.mjs emulator-5554`，须先构建 source、receiver、helper 三个 APK；API 35 同一用例已加入 CI，尚待托管结果。
+
+连续分享修复：API 37 的 `.appvanta/runs/share-helper-1790730614350/verification.json` 通过接收界面尚未返回时再次发起分享、选择系统接收者并验证内容，此前取消及已发送回执逐字节摘要保持不变。同次 CLI/MCP、取消、两种宿主强杀和只读查询全部通过，来源文件已清理、租约为空。helper 改为 `singleTop`，宿主在每个新 operation 的首次准备使用 `NEW_TASK | MULTIPLE_TASK`（`am start -f 0x18000000`），让新操作拥有独立 Activity 任务；后续准备与发送仍须匹配 operation 回执。
+
+首次连续分享运行 `share-helper-1790729989579` 复现 `singleTask` 重新进入旧操作实例后无法准备新操作；仅改 `singleTop` 的 `share-helper-1790730206039` 仍失败。试验 `share-helper-1790730487133` 使用了设备不支持的命名参数，在发送前被拒绝，随后改用上述数值 flags。三次失败和各自具名文件清理记录保留。构建、完整 263 项测试通过；最终参数修正后再次构建及四项聚焦测试通过。该验收是串行的两次分享，不证明并行宿主或任意 Activity 栈组合。较早选择器修复公开 `c118bc8` 的 CI 36652492107 已全绿，不能代替本次修订的托管验收。
