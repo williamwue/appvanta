@@ -7,6 +7,8 @@ from pathlib import Path
 import time
 
 from appvanta import AppVanta, AppVantaToolError
+from mcp.shared.exceptions import MCPError
+from mcp.types import REQUEST_TIMEOUT
 
 
 async def wait_task(app, task_id, predicate, timeout=30):
@@ -17,6 +19,51 @@ async def wait_task(app, task_id, predicate, timeout=30):
             return task
         await asyncio.sleep(0.1)
     raise AssertionError(f'Task {task_id} did not reach the required state')
+
+
+async def verify_request_timeout(app, device):
+    lock_args = {'deviceId': device}
+    assert await app.call('inspect_device_lock', lock_args) is None
+    action = {'kind': 'wait', 'condition': {'kind': 'app-running',
+              'packageName': f'dev.appvanta.absent.t{time.time_ns()}'}, 'timeoutMs': 60000}
+    pending = asyncio.create_task(app.call('execute_action', {**lock_args, 'action': action}, timeout=5))
+    evidence = {'action': action, 'requestTimeoutSeconds': 5}
+    try:
+        deadline = time.monotonic() + 4
+        lease = None
+        while time.monotonic() < deadline:
+            lease = await app.call('inspect_device_lock', lock_args, timeout=2)
+            if lease:
+                break
+            assert not pending.done(), 'Request ended before acquiring its device lease'
+            await asyncio.sleep(0.05)
+        assert lease and lease['owner'] == 'alive', 'Require a real in-flight device request'
+        evidence['activeLease'] = lease
+        try:
+            await pending
+            raise AssertionError('Long device wait returned before Python timeout')
+        except MCPError as error:
+            assert error.error.code == REQUEST_TIMEOUT
+            evidence['error'] = error.error.model_dump(mode='json', by_alias=True)
+        began = time.monotonic()
+        while time.monotonic()-began < 5:
+            if await app.call('inspect_device_lock', lock_args, timeout=2) is None:
+                evidence['leaseReleasedAfterTimeoutMs'] = round((time.monotonic()-began)*1000)
+                break
+            await asyncio.sleep(0.05)
+        assert 'leaseReleasedAfterTimeoutMs' in evidence, 'Timed-out request retained its lease'
+        assert any(tool.name == 'execute_action' for tool in await app.tools())
+        observed = await app.observe(device)
+        assert Path(observed['screenshotPath']).is_file()
+        evidence.update(status='passed', sessionUsable=True, observationAfterTimeout=observed)
+        return evidence
+    finally:
+        if not pending.done():
+            pending.cancel()
+            try:
+                await pending
+            except asyncio.CancelledError:
+                pass
 
 
 async def verify(device):
@@ -47,6 +94,7 @@ async def verify(device):
                 for key in ('screenshotPath', 'uiTreePath'):
                     assert Path(observation[key]).is_file()
                 report.update(device=device, observation=observation)
+                report['requestTimeout'] = await verify_request_timeout(app, device)
                 flow = {'version': 1, 'name': 'Python SDK read-only Flow',
                         'steps': [{'description': 'Retain Python caller marker', 'echo': root.name}]}
                 run = await app.run_flow(device, flow)

@@ -33,6 +33,12 @@ mixed-content successful responses raise `AppVantaResultError`; use `call_raw`
 when consuming images or other content. Protocol and transport errors retain
 their official MCP exception types. Nothing is automatically retried.
 
+The device verifier additionally exercises `call(..., timeout=5)` against an
+actual 60-second read-only Android wait. It requires an observed live device
+lease before timeout, MCP timeout code `-32001`, subsequent lease release and a
+new successful observation on the same connection. A timeout alone is never
+treated as proof of cleanup.
+
 Keep the async context open until calls finish, and enter/exit it in the same
 task. Request timeout/cancellation sends the protocol abandon notification;
 it is not proof of device rollback or completed cleanup. Inspect saved evidence
