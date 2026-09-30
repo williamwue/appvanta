@@ -10,6 +10,12 @@ import { basename, join } from 'node:path';
 const persistent = process.argv[2] === 'persistent';
 let target, reader, exited, failures = 0;
 const events = [];
+const recordEvent = phase => {
+  const event = { phase, at: Date.now() };
+  events.push(event);
+  console.log(JSON.stringify(event));
+};
+recordEvent('fixture-started');
 mock.module('node:fs/promises', { namedExports: { ...fs,
   rename: async (from, to) => {
     try { return await fs.rename(from, to); }
@@ -17,11 +23,11 @@ mock.module('node:fs/promises', { namedExports: { ...fs,
       if (!target || !basename(from).startsWith('transfer-') || await fs.realpath(to) !== target) throw error;
       assert.equal(error.code, 'EPERM', 'Require a real OS sharing violation');
       failures++;
-      if (failures === 1) events.push({ phase: 'native-rename-denied', at: Date.now() });
+      if (failures === 1) recordEvent('native-rename-denied');
       if (!persistent && failures === 1) {
         reader.stdin.end('release\n');
         assert.deepEqual(await exited, [0, null]);
-        events.push({ phase: 'holder-exited', at: Date.now() });
+        recordEvent('holder-exited');
       }
       // Propagate the actual OS error; only the production retry can publish.
       throw error;
@@ -41,11 +47,12 @@ try { [Console]::WriteLine('locked'); [Console]::Out.Flush(); [Console]::ReadLin
 finally { $stream.Dispose(); [Console]::WriteLine('released') }
 `;
   reader = spawn('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', script], { env: { ...process.env, APPVANTA_RECORD: target }, windowsHide: true, stdio: ['pipe', 'pipe', 'pipe'] });
+  recordEvent('holder-spawned');
   exited = once(reader, 'exit');
   let stderr = ''; reader.stderr.on('data', chunk => { stderr += chunk; });
   const [output] = await Promise.race([once(reader.stdout, 'data', { signal: AbortSignal.timeout(10000) }), exited.then(() => { throw new Error(`Reader exited before locking: ${stderr}`); })]);
   assert.match(output.toString(), /locked/);
-  events.push({ phase: 'holder-locked', at: Date.now() });
+  recordEvent('holder-locked');
   const session = randomUUID();
   if (persistent) {
     await assert.rejects(store.transferQueued(record, process.pid, session), { code: 'EPERM' });
@@ -58,9 +65,11 @@ finally { $stream.Dispose(); [Console]::WriteLine('released') }
     assert.equal(transferred.owner.session, session);
     assert.equal(JSON.parse(await fs.readFile(target, 'utf8')).owner.session, session);
   }
-  events.push({ phase: persistent ? 'bounded-refusal' : 'transfer-passed', at: Date.now() });
+  recordEvent(persistent ? 'bounded-refusal' : 'transfer-passed');
   console.log(JSON.stringify({ mode: persistent ? 'persistent' : 'transient', nativeFailures: failures, events }));
 } finally {
+  recordEvent('cleanup-started');
   if (reader && reader.exitCode === null && reader.signalCode === null) { reader.stdin.end('release\n'); await exited; }
+  recordEvent('holder-cleaned');
   await fs.rm(root, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
 }
