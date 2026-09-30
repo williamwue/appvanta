@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import { mock } from 'node:test';
+import { createHash } from 'node:crypto';
 import * as childProcess from 'node:child_process';
 import { mkdir, mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -16,7 +17,7 @@ mock.module('node:child_process', { namedExports: {
         if (operation === 'pull') {
           scenario.pulls++;
           if (scenario.pullFails) throw Object.assign(new Error('injected adb pull failure'), { code: 'ETIMEDOUT', killed: true, signal: 'SIGTERM', stderr: 'adb: protocol fault\n' + 'x'.repeat(5000), stdout: 'adb: transfer failed\n' + 'y'.repeat(5000) });
-          await writeFile(args[4], scenario.emptyPull || (scenario.emptyLogPull && args[3].endsWith('.log')) ? '' : 'nonempty artifact');
+          await writeFile(args[4], scenario.emptyPull || (scenario.emptyLogPull && args[3].endsWith('.log')) ? '' : scenario.corruptPull ? 'corrupt! artifact' : 'nonempty artifact');
           if (scenario.abortOnPull) scenario.abortController.abort(new Error('injected cancellation during pull'));
           callback(null, { stdout: '', stderr: '' });
           return;
@@ -42,8 +43,14 @@ mock.module('node:child_process', { namedExports: {
         } else if (command.startsWith('case ') && command.includes('kill -')) {
           scenario.kills++;
           scenario.owned = false;
-        } else if (command.startsWith('if [ -f ') && command.includes('/sdcard/')) {
+        } else if (command.startsWith('if [ -f ') && (command.includes('/sdcard/') || command.includes('/data/local/tmp/'))) {
           stdout = scenario.missingRemote ? '' : 'present';
+        } else if (command.startsWith('stat -c %s ')) {
+          scenario.hashReads = (scenario.hashReads ?? 0) + 1;
+          const remote = command.split(' ')[3];
+          const content = scenario.emptyLogPull && remote.endsWith('.log') ? '' : scenario.changeRemote && scenario.hashReads > 1 ? 'modified artifact' : 'nonempty artifact';
+          stdout = `${Buffer.byteLength(content)}\n${createHash('sha256').update(content).digest('hex')}  ${remote}`;
+          if (scenario.invalidDigest) stdout = 'not a digest';
         } else if (command.startsWith('rm -f ')) {
           scenario.removes++;
         }
@@ -138,6 +145,13 @@ try {
   assert.equal(zeroBytes.state.removes, 0);
   assert.equal(zeroBytes.evidence.transportErrors.at(-1).phase, 'capture-pull');
 
+  for (const options of [{ corruptPull: true }, { changeRemote: true }, { invalidDigest: true }]) {
+    const mismatch = await run(options);
+    assert.equal(mismatch.error?.code, 'APPVANTA_RESTORATION_UNVERIFIED');
+    assert.equal(mismatch.evidence.cleaned, false);
+    assert.equal(mismatch.state.removes, 0);
+  }
+
   const captureMissing = await run({ missingRemote: true });
   assert.equal(captureMissing.error.code, 'APPVANTA_RESTORATION_UNVERIFIED');
   assert.match(captureMissing.evidence.error, /Capture artifact absent/);
@@ -188,6 +202,8 @@ try {
   assert.equal(recoveryRetried.evidence.cleaned, true);
   assert.equal(recoveryRetried.state.kills, 1);
   assert.equal(recoveryRetried.state.removes, 1);
+  assert.equal(recoveryRetried.evidence.preserved[0].sha256, createHash('sha256').update('nonempty artifact').digest('hex'));
+  assert.equal(recoveryRetried.evidence.preserved[1].sha256, createHash('sha256').update('').digest('hex'));
   assert.equal(recoveryRetried.evidence.transportErrors.at(-1).phase, 'recovery-ownership');
 
   const recoveryReused = await recover(stalled.evidence, { owned: false });
@@ -203,10 +219,17 @@ try {
   assertPullError(recoveryPullFailed.evidence, 'recovery-pull');
 
   const recoveryEmpty = await recover(stalled.evidence, { emptyPull: true });
-  assert.match(String(recoveryEmpty.error), /Recovered capture transfer unverified/);
+  assert.match(String(recoveryEmpty.error), /Capture transfer integrity/);
   assert.equal(recoveryEmpty.evidence.cleaned, false);
   assert.equal(recoveryEmpty.state.removes, 0);
   assert.equal(recoveryEmpty.evidence.transportErrors.at(-1).phase, 'recovery-pull');
+
+  for (const options of [{ corruptPull: true }, { changeRemote: true }, { invalidDigest: true }]) {
+    const mismatch = await recover(stalled.evidence, options);
+    assert(mismatch.error);
+    assert.equal(mismatch.evidence.cleaned, false);
+    assert.equal(mismatch.state.removes, 0);
+  }
 
   const recoveryMissing = await recover(stalled.evidence, { missingRemote: true });
   assert.equal(recoveryMissing.error.code, 'ENOENT');

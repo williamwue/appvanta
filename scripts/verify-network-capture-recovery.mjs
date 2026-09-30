@@ -4,6 +4,7 @@ import { promisify } from 'node:util';
 import { createAdbTcpRelay } from './adb-tcp-relay.mjs';
 import { probeCaptureTransfer } from './capture-transfer-probe.mjs';
 import { once } from 'node:events';
+import { createHash } from 'node:crypto';
 import { mkdir, readFile, readdir, writeFile, stat } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
 import { inspectDeviceLock } from '../packages/core/dist/index.js';
@@ -135,6 +136,11 @@ try {
     const preserved = record.preserved.find(item => item.path === `recovered/${record.artifact}`);
     assert(preserved && preserved.bytes > 0, 'Interrupted capture must be preserved locally');
     assert.equal((await stat(join(message.run, 'captures', preserved.path))).size, preserved.bytes);
+    for (const item of record.preserved) {
+      const bytes = await readFile(join(message.run, 'captures', item.path));
+      assert.equal(bytes.length, item.bytes);
+      assert.equal(createHash('sha256').update(bytes).digest('hex'), item.sha256);
+    }
     assert.equal(adb('shell', `test ! -e ${record.remote} -a ! -e ${record.control}.pid && echo absent`), 'absent');
     captures.push(record);
   }

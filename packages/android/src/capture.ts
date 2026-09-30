@@ -1,7 +1,8 @@
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { mkdir, readdir, readFile, writeFile, stat } from 'node:fs/promises';
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
+import { createReadStream } from 'node:fs';
 import { join } from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
 
@@ -23,6 +24,29 @@ interface CaptureRecoveryRecord {
   readonly error?: string;
   readonly cleanupError?: string;
   readonly transportErrors?: readonly TransportError[];
+  readonly transferIntegrity?: TransferIntegrity;
+}
+
+interface TransferIntegrity { readonly bytes: number; readonly sha256: string }
+
+async function pullVerified(exec: (args: string[], timeout?: number) => Promise<string>, remote: string, local: string, allowEmpty: boolean, timeout: number): Promise<TransferIntegrity> {
+  const fingerprint = async () => {
+    const output = await exec(['shell', `stat -c %s ${remote} && sha256sum ${remote}`], timeout);
+    const lines = output.trim().split(/\r?\n/);
+    const digest = /^([a-f0-9]{64})  (.+)$/.exec(lines[1] ?? '');
+    if (lines.length !== 2 || !/^(0|[1-9][0-9]*)$/.test(lines[0]!) || !Number.isSafeInteger(Number(lines[0])) || !digest || digest[2] !== remote) throw new Error('Capture transfer integrity metadata invalid');
+    return { bytes: Number(lines[0]), sha256: digest[1]! };
+  };
+  const before = await fingerprint();
+  await exec(['pull', remote, local], timeout);
+  const info = await stat(local);
+  if (!info.isFile() || (!allowEmpty && info.size < 1) || info.size !== before.bytes) throw new Error('Capture transfer integrity size mismatch');
+  const digest = createHash('sha256');
+  for await (const chunk of createReadStream(local)) digest.update(chunk);
+  const actual = digest.digest('hex');
+  const after = await fingerprint();
+  if (actual !== before.sha256 || before.bytes !== after.bytes || before.sha256 !== after.sha256) throw new Error('Capture transfer integrity SHA-256 mismatch or remote changed');
+  return before;
 }
 
 interface TransportError {
@@ -34,12 +58,13 @@ interface TransportError {
   readonly elapsedMs: number;
   readonly stderr?: string;
   readonly stdout?: string;
+  readonly message?: string;
 }
 
 function recordTransportError(errors: TransportError[], phase: TransportError['phase'], attempt: number, started: number, error: unknown): void {
   const detail = error as NodeJS.ErrnoException & { killed?: boolean; signal?: string | null; stderr?: unknown; stdout?: unknown };
   errors.push({ phase, attempt, code: typeof detail?.code === 'string' || typeof detail?.code === 'number' ? detail.code : null,
-    killed: detail?.killed === true, signal: detail?.signal ?? null, elapsedMs: Date.now() - started,
+    killed: detail?.killed === true, signal: detail?.signal ?? null, elapsedMs: Date.now() - started, message: String(error).slice(0, 1024),
     ...(typeof detail?.stderr === 'string' ? { stderr: detail.stderr.slice(0, 4096) } : {}),
     ...(typeof detail?.stdout === 'string' ? { stdout: detail.stdout.slice(0, 4096) } : {}) });
 }
@@ -79,6 +104,7 @@ function parseRecoveryRecord(value: unknown, device: string): CaptureRecoveryRec
 // Startup and cleanup deliberately outlive caller cancellation. Only this capture's
 // PID and unique output marker may be signalled; never kill all screenrecord/perfetto.
 export async function captureArtifact(adb: string, device: string, directory: string, kind: 'screen' | 'trace', seconds: number, signal?: AbortSignal, lifecycle?: { ready(): void; stop: AbortSignal; allowNaturalEnd?: boolean }) {
+  let transferIntegrity: TransferIntegrity | undefined;
   signal?.throwIfAborted();
   await mkdir(directory, { recursive: true });
   const name = `${kind}-${randomUUID()}.${kind === 'screen' ? 'mp4' : 'perfetto-trace'}`;
@@ -141,14 +167,12 @@ export async function captureArtifact(adb: string, device: string, directory: st
       // The supervisor publishes status after the capture exits; wait before removing controls.
       await shell(`for n in 1 2 3 4 5; do [ -f ${control}.status ] && break; sleep 1; done; test -f ${control}.status`);
       if (forced && !failure) failure = new Error('Capture required forced termination; artifact finalization is uncertain');
-      // Preserve a remote artifact until a nonempty local transfer is verified.
+      // Preserve the remote artifact until its complete bytes are verified locally.
       const presenceStarted = Date.now();
       if (await shell(`if [ -f ${remote} ]; then echo present; fi`) === 'present') {
         const pullStarted = Date.now();
         try {
-          await exec(['pull', remote, path], 120000);
-          const local = await stat(path);
-          if (!local.isFile() || local.size < 1) throw new Error('Capture transfer produced no nonempty regular local artifact');
+          transferIntegrity = await pullVerified(exec, remote, path, false, 120000);
         } catch (error) {
           recordTransportError(transportErrors, 'capture-pull', 1, pullStarted, error);
           if (!failure) failure = error;
@@ -167,7 +191,7 @@ export async function captureArtifact(adb: string, device: string, directory: st
       catch (error) { failure = error; }
     }
     try {
-      await save({ status: failure || cleanupError ? 'failed' : 'passed', cancelled: signal?.aborted ?? false, cleaned: !cleanupError, finishedAt: new Date().toISOString(), ...(failure ? { error: String(failure) } : {}), ...(cleanupError ? { cleanupError: String(cleanupError) } : {}), ...(transportErrors.length ? { transportErrors } : {}) });
+      await save({ status: failure || cleanupError ? 'failed' : 'passed', cancelled: signal?.aborted ?? false, cleaned: !cleanupError, finishedAt: new Date().toISOString(), ...(transferIntegrity ? { transferIntegrity } : {}), ...(failure ? { error: String(failure) } : {}), ...(cleanupError ? { cleanupError: String(cleanupError) } : {}), ...(transportErrors.length ? { transportErrors } : {}) });
     } catch (evidenceError) {
       throw Object.assign(new AggregateError([failure, cleanupError, evidenceError].filter(Boolean), 'Capture cleanup or final evidence could not be verified'), { code: 'APPVANTA_RESTORATION_UNVERIFIED' });
     }
@@ -224,16 +248,15 @@ export async function recoverCaptures(adb: string, device: string, runDirectory:
     }
     const recoveredDirectory = join(directory, 'recovered');
     await mkdir(recoveredDirectory, { recursive: true });
-    const preserved: { path: string; bytes: number }[] = [];
+    const preserved: { path: string; bytes: number; sha256: string }[] = [];
     for (const [remote, name] of [[record.remote, record.artifact], [`${record.control}.log`, `${record.artifact}.log`]]) {
       const local = join(recoveredDirectory, name!);
       const presenceStarted = Date.now();
       if ((await shell(`if [ -f ${remote} ]; then echo present; fi`)) === 'present') {
         const pullStarted = Date.now();
         try {
-          await exec(['pull', remote!, local], 60000);
-          const localArtifact = await stat(local);
-          if (!localArtifact.isFile() || (remote === record.remote && localArtifact.size < 1)) throw new Error(`Recovered capture transfer unverified: ${record.artifact}`);
+          const integrity = await pullVerified(exec, remote!, local, remote !== record.remote, 60000);
+          preserved.push({ path: `recovered/${name}`, ...integrity });
         } catch (error) {
           recordTransportError(transportErrors, 'recovery-pull', 1, pullStarted, error);
           await writeFile(evidencePath, JSON.stringify({ ...record, status: 'failed', cleaned: false, transportErrors,
@@ -247,8 +270,6 @@ export async function recoverCaptures(adb: string, device: string, runDirectory:
           cleanupError: 'Required capture artifact absent; remote controls retained', finishedAt: new Date().toISOString() }, null, 2));
         throw error;
       }
-      try { preserved.push({ path: `recovered/${name}`, bytes: (await stat(local)).size }); }
-      catch (error) { if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error; }
     }
     const recovered = { ...record, status: 'recovered', preserved, transportErrors, artifactValidity: 'unverified', finishedAt: new Date().toISOString(), error: record.error ?? 'Recovered after owning host exited before capture finalization' };
     await writeFile(evidencePath, JSON.stringify({ ...recovered, cleaned: false }, null, 2));
