@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import { spawn, execFileSync, execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { createAdbTcpRelay } from './adb-tcp-relay.mjs';
+import { probeCaptureTransfer } from './capture-transfer-probe.mjs';
 import { once } from 'node:events';
 import { mkdir, readFile, readdir, writeFile, stat } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
@@ -26,8 +27,10 @@ let run;const result=await runAndroidFlow(${JSON.stringify(device)},${JSON.strin
 const relay = tcpDisconnect ? await createAdbTcpRelay() : undefined;
 const owner = spawn(process.execPath, ['--input-type=module', '-e', code], { windowsHide: true, ...(relay ? { env: relay.environment } : {}), stdio: ['ignore', 'ignore', 'pipe', 'ipc'] });
 const exited = once(owner, 'exit'); let stderr = ''; owner.stderr.on('data', data => { stderr += data; });
+let sourceRun;
 try {
   const [message] = await Promise.race([once(owner, 'message', { signal: AbortSignal.timeout(90000) }), exited.then(() => { throw new Error(stderr); })]);
+  sourceRun = message.run;
   const network = JSON.parse(await readFile(join(message.run, 'network/recovery.json'), 'utf8'));
   assert.equal(adb('shell', 'settings', 'get', 'global', 'http_proxy'), network.sessionProxy);
   const command = process.platform === 'win32'
@@ -142,6 +145,17 @@ try {
   console.log(JSON.stringify({ status: 'passed', root }));
 } catch (error) {
   await writeFile(join(root, 'verification.json'), JSON.stringify({ status: 'failed', error: String(error), stdout: error.stdout, stderr: error.stderr, relay: relay?.diagnostics, interruptedPull: relay?.interruptedPull, originalProxy, lease: await inspectDeviceLock(device) }, null, 2));
+  if (sourceRun && relay) {
+    try {
+      for (const name of (await readdir(join(sourceRun, 'captures'))).filter(name => name.endsWith('.capture.json'))) {
+        const record = JSON.parse(await readFile(join(sourceRun, 'captures', name), 'utf8'));
+        if (record.device === device && ['screen', 'trace'].includes(record.kind) && !record.cleaned && record.transportErrors?.some(item => item.phase === 'recovery-pull')) {
+          await probeCaptureTransfer({ adb: process.env.ADB_PATH ?? 'adb', device, remote: record.remote, directory: join(root, 'transfer-probes', record.kind), relayEnvironment: relay.environment });
+        }
+      }
+      await writeFile(join(root, 'probe-relay.json'), JSON.stringify(relay.diagnostics, null, 2));
+    } catch (probeError) { await writeFile(join(root, 'probe-error.txt'), String(probeError)); }
+  }
   throw error;
 } finally {
   if (owner.exitCode === null && owner.signalCode === null) { owner.kill('SIGKILL'); await exited; }
