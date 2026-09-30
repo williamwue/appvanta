@@ -26,3 +26,7 @@ MCP 工具 `inspect_android_project` 接受 `projectDirectory` 和可选 `buildL
 托管首轮 `36677128333`：macOS/JDK 17 的 `gradle-project-1790748876428` 已通过实际构建、APK 内容检查和三个失败场景，macOS 归档 105 个文件校验通过。Windows/Linux 在 Gradle 类加载阶段失败，两边各 6 个归档文件校验通过，原始日志均为 GradleMain ClassNotFoundException；尚未执行 Android 构建。它们不构成三系统全绿。
 
 Windows `gradle-project-1790749080206` 通过设置无有效启动 JAR 的 GRADLE_HOME、同时在 PATH 提供 8.13，复现相同异常。验证脚本现检查所选安装的固定版本启动 JAR，无效的自动环境候选继续查 PATH，显式错误参数则拒绝；记录选择来源、路径和 JAR 摘要，并先实际检查 Gradle 版本。相同环境下 `gradle-project-1790749081553` 完整通过，45 项脚本测试通过。首轮托管没有记录原 GRADLE_HOME，故这仍是已复现的选择缺陷和待托管验证的修正，不能反推其环境路径；新回执补记该值。
+
+修正快照 `c6208fd` 的 CI `36677718660`：Linux `gradle-project-1790749295701` 与 macOS `gradle-project-1790749306277` 的真实构建、APK 检查及三种失败诊断通过，各 106 个归档文件核验通过。Linux 回执显示环境 GRADLE_HOME 为 `/usr/share/gradle-9.7.1`，实际从 PATH 选择 8.13；macOS 无环境覆盖，同样从 PATH 选择。两边启动 JAR SHA-256 均为 `ca68e720409e7bb345fb14d8b6ba57600028e399f4b2a7ca7633c26d4d38bd1c`。Windows 的 Gradle 步骤已通过，完整任务/归档在本次检查仍待后续确认。
+
+验证脚本现在为每次 Gradle 调用先保存日志及 `.command.json` 回执，再分析和断言。超时、输出上限、启动失败也保存可获得的 stdout/stderr、摘要和退出原因；日志按 stdout 后 stderr 拼接，不宣称跨流时序。超时被独立标记，即使子进程处理终止信号后退出 0 也不能成为成功；超时一秒后仍未退出则升级终止该直接子进程。回执明确 `descendantCleanup=unverified`，此脚本尚不具备产品构建执行器所需的 Gradle daemon/后代进程恢复保证。Windows `gradle-project-1790749521060` 真实构建完整复验通过，脚本回归 48 通过、1 个 POSIX 信号用例跳过；后者仍待托管验证。

@@ -46,6 +46,8 @@ API 37 / Android 17 已验证裁决后步骤边界再次崩溃、只读等待执
 
 ## 本轮已完成的范围
 
+- Gradle 选择修正的 CI `36677718660` 已有 Linux/macOS 真实构建及失败诊断证据，各 106 个文件核验通过；Linux 确认存在 9.7.1 的 GRADLE_HOME 覆盖并正确选择 PATH 的 8.13。Windows 构建验证步骤通过，完整任务与归档尚待确认。验证脚本补超时/输出上限/启动失败的日志与退出回执，本地真实构建和 48 项脚本测试通过，1 个 POSIX 信号用例在 Windows 跳过；daemon/后代清理未验证，不作为产品执行器完成证据。
+
 - Gradle 项目诊断首轮 CI `36677128333` 的 macOS 真实构建和三种失败诊断通过，105 个证据文件已核验；Windows/Linux 在启动器类加载阶段失败，各 6 个证据文件已核验。本地复现无效 GRADLE_HOME 遮住有效 PATH 的相同异常，修正候选检查后真实构建复验和 45 项脚本测试通过；原 CI 未记录该环境值，新回执补齐选择证据，托管修正仍待确认。见 project-diagnostics.md。
 
 - MCP Flow stdin EOF 验收新增实际设备路径：Windows/API 37 的 `mcp-flow-disconnect-1790747716968` 在等待动作 journal 为 started、租约属于 MCP 服务进程后关闭输入，59 ms 内正常退出，run/progress/step 均取消、动作结束记录为 failed、设备租约释放、取消请求无响应。该检查已接入 Linux/API 35 CI，托管结果待验证；仅覆盖只读等待动作的派发后断连，不代表所有环境恢复或写入动作均已验收，39 项计数不变。

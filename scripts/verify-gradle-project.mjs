@@ -8,6 +8,7 @@ import { promisify } from 'node:util';
 import { inspectAndroidProject } from '../packages/android/dist/index.js';
 import { mcpExchange } from './test/helpers/mcp-exchange.mjs';
 import { resolveGradleInstallation } from './gradle-installation.mjs';
+import { runLoggedCommand } from './logged-command.mjs';
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const installation = resolveGradleInstallation(process.argv[2]);
@@ -60,19 +61,13 @@ const report = { status: 'running', project, evidence, gradleVersion: '8.13', ag
 const persist = () => writeFile(join(evidence, 'verification.json'), JSON.stringify(report, null, 2));
 async function gradle(name, tasks, environment = process.env) {
   const args = ['-classpath', launcher, 'org.gradle.launcher.GradleMain', '--no-daemon', '--console=plain', '--max-workers=2', ...(process.env.APPVANTA_GRADLE_OFFLINE === '1' ? ['--offline'] : []), ...tasks];
-  let stdout, stderr, exitCode;
-  try {
-    ({ stdout, stderr } = await runFile(java, args, { cwd: project, env: environment, windowsHide: true, encoding: 'utf8', timeout: 240000, maxBuffer: 4 * 1024 * 1024 }));
-    exitCode = 0;
-  } catch (error) {
-    if (error.killed || typeof error.code !== 'number') throw error;
-    stdout = error.stdout ?? ''; stderr = error.stderr ?? ''; exitCode = error.code;
-  }
   const log = join(evidence, `${name}.log`);
-  await writeFile(log, `${stdout}\n${stderr}`);
-  const diagnosis = await inspectAndroidProject({ projectDirectory: project, buildLogPath: log });
-  const record = { name, tasks, exitCode, diagnosis };
+  const command = await runLoggedCommand({ file: java, args, cwd: project, env: environment, logPath: log, timeoutMs: 240000 });
+  const record = { name, tasks, exitCode: command.exitCode, command };
   report.cases.push(record);
+  await persist();
+  if (command.status !== 'exited') throw new Error(`Gradle ${name} ${command.status}; retained command receipt: ${log}.command.json`);
+  record.diagnosis = await inspectAndroidProject({ projectDirectory: project, buildLogPath: log });
   await persist();
   return record;
 }
