@@ -1,7 +1,7 @@
 import { captureArtifact } from './capture.js';
 import { textShareArguments } from './text-share.js';
 import { fileShareArguments } from './file-share.js';
-import { shareFiles } from './multi-file-share.js';
+import { shareFiles, readAttachmentShare } from './multi-file-share.js';
 import { shakeEmulator } from './emulator-sensors.js';
 import { matchAnrStack } from './anr-stacks.js';
 import { parseRuntimeIncidents } from './runtime-diagnostics.js';
@@ -40,6 +40,9 @@ export interface RuntimeDiagnostics { readonly foregroundPackage?: string; reado
 interface AdbDeviceLine { readonly id: DeviceId; readonly status: Device["status"]; readonly model?: string }
 
 export class AdbDriver implements DeviceDriver {
+  public async inspectAttachmentShare(deviceId: DeviceId, operation: string) {
+    return readAttachmentShare(operation, args => this.run(['-s', deviceId, ...args]));
+  }
   public async openUrl(deviceId: DeviceId, value: string): Promise<void> {
     const url = new URL(value);
     if (url.protocol !== "http:" && url.protocol !== "https:") throw new Error("Only HTTP(S) URLs are supported");

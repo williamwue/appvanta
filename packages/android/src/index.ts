@@ -20,5 +20,7 @@ export { restartAdjudicatedAndroidTask } from './restart-adjudicated-task.js';
 export { validateAdjudicatedAndroidFlow } from './continue-adjudicated-task.js';
 export type { AdjudicatedAndroidContinuationOptions } from './continue-adjudicated-task.js';
 export { recoverCaptures } from './capture.js';
+export { parseAttachmentShareReceipt } from './multi-file-share.js';
+export type { AttachmentShareReceipt } from './multi-file-share.js';
 export { recoverNetworkSession } from './network-session.js';
 export { parsePermissionGrant, parsePermissionFlags, recoverRuntimePermissions, startRuntimePermissions } from './permission-fixture.js';

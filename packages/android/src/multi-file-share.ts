@@ -1,5 +1,5 @@
 import { parseAction, type Action } from '@appvanta/core';
-import { randomUUID } from 'node:crypto';
+import { randomUUID, createHash } from 'node:crypto';
 import { mkdir, open } from 'node:fs/promises';
 import { join } from 'node:path';
 
@@ -7,6 +7,36 @@ type Share = Extract<Action, { kind: 'share-files' }>;
 type Execute = (args: readonly string[]) => Promise<string>;
 const helper = 'dev.appvanta.share.helper';
 const quote = (value: string) => "'" + value.replaceAll("'", "'\"'\"'") + "'";
+
+export interface AttachmentShareReceipt {
+  readonly version: 1;
+  readonly operation: string;
+  readonly state: 'prepared' | 'dispatching' | 'dispatched' | 'cancelled' | 'rejected';
+  readonly count: number;
+  readonly mimeType: string;
+  readonly packageName?: string;
+  readonly uris: readonly string[];
+  readonly error?: string;
+}
+
+export function parseAttachmentShareReceipt(raw: string, operation: string): AttachmentShareReceipt {
+  if (!/^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/.test(operation)) throw new Error('Invalid attachment operation ID');
+  if (raw.length > 131072) throw new Error('Attachment receipt exceeds limit');
+  const value = JSON.parse(raw);
+  if (!value || typeof value !== 'object' || Array.isArray(value) || Object.keys(value).some(key => !['version', 'operation', 'state', 'count', 'mimeType', 'packageName', 'uris', 'error'].includes(key)) ||
+      value.version !== 1 || value.operation !== operation || !['prepared', 'dispatching', 'dispatched', 'cancelled', 'rejected'].includes(value.state) ||
+      !Number.isInteger(value.count) || value.count < 2 || value.count > 16 || !Array.isArray(value.uris) || value.uris.length > value.count || new Set(value.uris).size !== value.uris.length ||
+      (['dispatching', 'dispatched'].includes(value.state) && value.uris.length !== value.count) ||
+      (value.error !== undefined && (value.state !== 'rejected' || typeof value.error !== 'string' || value.error.length > 16384))) throw new Error('Invalid attachment receipt');
+  for (const uri of value.uris.length ? value.uris : ['content://validation/item']) parseAction({ kind: 'share-file', uri, mimeType: value.mimeType, ...(value.packageName !== undefined ? { packageName: value.packageName } : {}) });
+  return value as AttachmentShareReceipt;
+}
+
+export async function readAttachmentShare(operation: string, execute: Execute) {
+  if (!/^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/.test(operation)) throw new Error('Invalid attachment operation ID');
+  const raw = await execute(['exec-out', 'content', 'read', '--uri', `content://${helper}/operations/${operation}`]);
+  return { scope: 'read-only' as const, resumeAuthorized: false as const, receipt: parseAttachmentShareReceipt(raw, operation), receiptSha256: createHash('sha256').update(raw).digest('hex') };
+}
 
 export function validateShareReceipt(raw: string, operation: string, action: Share, count: number, state: string): unknown {
   if (!Number.isInteger(count) || count < 0 || count > action.uris.length) throw new Error('Invalid attachment receipt count');

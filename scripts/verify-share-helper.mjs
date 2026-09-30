@@ -8,6 +8,7 @@ import { resolve, join } from 'node:path';
 import { withDeviceLock, inspectDeviceLock } from '../packages/core/dist/index.js';
 import { AdbDriver } from '../packages/android/dist/index.js';
 import { readMcpResponses } from './mcp-response-reader.mjs';
+import { verifyShareReceiptClients } from './verify-share-receipt-clients.mjs';
 
 const device = process.argv[2]; assert(device);
 const directory = resolve('.appvanta/runs', `share-helper-${Date.now()}`); await mkdir(directory, { recursive: true });
@@ -20,7 +21,7 @@ const request = async (operation, mode, index) => adb('shell', 'am', 'start', '-
   ...(mode === 'prepare' ? ['--ei', 'index', String(index), '--ei', 'count', '2', '--es', 'mimeType', 'application/octet-stream', '--es', 'targetPackage', receiver, '-d', uris[index], '--grant-read-uri-permission'] : []));
 const receiptRaw = operation => adb('exec-out', 'content', 'read', '--uri', `content://${helper}/operations/${operation}`);
 const noDelivery = () => adb('shell', 'run-as', receiver, 'test', '!', '-e', 'files/received.json');
-const receipts = []; const prepared = []; const product = []; const interruptions = [];
+const receipts = []; const prepared = []; const product = []; const interruptions = []; const inspections = [];
 const interruptHost = async phase => {
   const hostDirectory = join(directory, phase);
   const action = { kind: 'share-files', uris, mimeType: 'application/octet-stream', packageName: receiver };
@@ -123,6 +124,14 @@ try {
       interruptions.push({ ...killed, receipt: durable, outcome: phase === 'prepared' ? 'explicitly-cancelled-without-delivery' : 'delivery-confirmed-and-replay-refused', lockScope: 'verifier parent retains device lock; killed child runs actual shareFiles with real adb' });
       await driver.stopApp(device, helper);
     }
+    const heldLease = (await inspectDeviceLock(device)).lease;
+    for (const sample of receipts) {
+      const raw = await receiptRaw(sample.receipt.operation);
+      inspections.push(await verifyShareReceiptClients(device, sample.receipt.operation, raw));
+      assert.equal(await receiptRaw(sample.receipt.operation), raw);
+      assert.deepEqual((await inspectDeviceLock(device)).lease, heldLease);
+      await noDelivery();
+    }
   });
     const flow = { name: 'Product multi-attachment delivery', steps: [
       { description: 'Send two attachments', action: { kind: 'share-files', uris, mimeType: 'application/octet-stream', packageName: receiver } },
@@ -161,8 +170,8 @@ try {
     await driver.stopApp(device, source);
   });
   assert.equal(await inspectDeviceLock(device), null);
-  await writeFile(join(directory, 'verification.json'), JSON.stringify({ status: 'passed', device, tokens, receipts, product, interruptions, fixturesRemoved: true }, null, 2));
+  await writeFile(join(directory, 'verification.json'), JSON.stringify({ status: 'passed', device, tokens, receipts, product, interruptions, inspections, fixturesRemoved: true }, null, 2));
   console.log(JSON.stringify({ status: 'passed', directory }));
 } catch (error) {
-  await writeFile(join(directory, 'verification.json'), JSON.stringify({ status: 'failed', error: String(error), tokens, prepared, receipts, product, interruptions, lease: await inspectDeviceLock(device) }, null, 2)); throw error;
+  await writeFile(join(directory, 'verification.json'), JSON.stringify({ status: 'failed', error: String(error), tokens, prepared, receipts, product, interruptions, inspections, lease: await inspectDeviceLock(device) }, null, 2)); throw error;
 }

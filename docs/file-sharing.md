@@ -41,6 +41,16 @@ adb -s emulator-5554 install -r .appvanta/share-helper/appvanta-share-helper.apk
 
 宿主在运行的 artifacts 目录保存请求、观察到的回执、逐项准备回执及发送意图。请求与回执不匹配时停止；发送前失败会尝试取消准备。已尝试发送后响应丢失则保留不确定结果，不自动发送第二次。独立的新调用会生成新的 operation，因此再次手动执行仍可能重复交付，不能把这套记录视为跨调用的 exactly-once 保证。helper 回执保留在应用私有目录，可经 `adb exec-out content read --uri content://dev.appvanta.share.helper/operations/<operation>` 查询；尚无回执自动回收策略。
 
+响应丢失后，可通过 CLI 查询已有 operation：
+
+```text
+node packages/cli/dist/index.js inspect-attachment-share emulator-5554 <operation-id>
+```
+
+MCP 对应 `inspect_attachment_share`，参数为 `{ "deviceId": "emulator-5554", "operation": "<operation-id>" }`；Android Driver 对应 `inspectAttachmentShare(deviceId, operation)`。查询校验 operation、状态、数量、URI、MIME 和目标包，返回回执及原始响应的 SHA-256、`scope: "read-only"` 和 `resumeAuthorized: false`。它不获取或释放设备租约，因此其他进程持锁时也可读取；不会重新发送附件或授权继续执行。`dispatched` 仍只表示 Android 启动调用返回，不能替代接收端内容验收。
+
+API 37 上已通过真实 CLI/MCP 查询 `prepared`、`cancelled` 和 `dispatched` 回执，并确认查询前后回执及已有租约不变；证据为 `.appvanta/share-receipt-clients-verification.json`。对应构建及 263 项测试通过（core 127、Android 96、脚本 40）。持续验收入口 `scripts/verify-share-helper.mjs` 包含相同查询检查。
+
 多附件选择器、多 provider、数量边界、跨用户、真机/OEM 和宿主/Activity 各中断窗口仍需扩展验收。详见 [多附件机制与边界](multi-attachment-design.md)。
 
 平台依据：[Android 文件分享](https://developer.android.com/training/secure-file-sharing)、[URI 读取授权](https://developer.android.com/reference/androidx/core/content/FileProvider)、[provider 可见性声明](https://developer.android.com/training/package-visibility/declaring)。
