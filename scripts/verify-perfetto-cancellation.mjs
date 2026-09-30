@@ -70,10 +70,11 @@ async function awaitProcessor(before, finished) {
   throw new Error('Processor startup checkpoint timed out');
 }
 const results = [];
-for (const client of ['sdk', 'mcp', ...(process.platform === 'win32' ? [] : ['cli'])]) {
+for (const client of ['sdk', 'mcp', 'cli']) {
   const before = new Set(await readdir('.appvanta/runs'));
   let child, exited, completed = false, rpcOutput = '';
   const controller = new AbortController();
+  const consoleRequest = join(root, 'cli-console.request');
   try {
     let pending;
     if (client === 'sdk') {
@@ -86,7 +87,10 @@ for (const client of ['sdk', 'mcp', ...(process.platform === 'win32' ? [] : ['cl
       child.stdin.write(JSON.stringify({ jsonrpc: '2.0', method: 'notifications/initialized' }) + '\n');
       child.stdin.write(JSON.stringify({ jsonrpc: '2.0', id: 2, method: 'tools/call', params: { name: 'analyze_perfetto', arguments: { ...options, trace: large } } }) + '\n');
     } else {
-      child = spawn(process.execPath, ['packages/cli/dist/index.js', 'analyze-perfetto', large, options.packageName, python, '6000'], { stdio: ['ignore', 'pipe', 'pipe'] });
+      const command = [process.execPath, 'packages/cli/dist/index.js', 'analyze-perfetto', large, options.packageName, python, '6000'];
+      child = process.platform === 'win32'
+        ? spawn(python, ['scripts/windows-console-runner.py', consoleRequest, ...command], { windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'] })
+        : spawn(command[0], command.slice(1), { stdio: ['ignore', 'pipe', 'pipe'] });
       exited = once(child, 'exit'); child.stdout.resume(); let stderr = '';
       child.stderr.on('data', data => { stderr += data; });
       pending = exited.then(([code, signal]) => ({ code, signal, stderr })).finally(() => { completed = true; });
@@ -95,10 +99,18 @@ for (const client of ['sdk', 'mcp', ...(process.platform === 'win32' ? [] : ['cl
     const started = Date.now();
     if (client === 'sdk') controller.abort(new Error('Verifier cancelled active analysis'));
     else if (client === 'mcp') child.stdin.write(JSON.stringify({ jsonrpc: '2.0', method: 'notifications/cancelled', params: { requestId: 2, reason: 'Verifier cancelled active analysis' } }) + '\n');
+    else if (process.platform === 'win32') await writeFile(consoleRequest, 'cancel', { flag: 'wx' });
     else child.kill('SIGINT');
     const response = client === 'mcp' ? { cancelledResponseSuppressed: true } : await pending;
     if (client === 'sdk') assert.match(response.error, /cancellation requested/);
     if (client === 'cli') { assert.equal(response.code, 1); assert.match(response.stderr, /cancellation requested/); }
+    if (client === 'cli' && process.platform === 'win32') {
+      const consoleEvidence = JSON.parse(await readFile(`${consoleRequest}.json`, 'utf8'));
+      assert.equal(consoleEvidence.sent, true); assert.equal(consoleEvidence.exited, true);
+      assert.equal(consoleEvidence.exitCode, 1); assert.equal(consoleEvidence.event, 'CTRL_C_EVENT');
+      assert.equal(alive(consoleEvidence.pid), false);
+      response.consoleEvidence = consoleEvidence;
+    }
     let analysis;
     const deadline = Date.now() + 30000;
     while (Date.now() < deadline) {
@@ -126,5 +138,5 @@ for (const client of ['sdk', 'mcp', ...(process.platform === 'win32' ? [] : ['cl
     await writeFile(join(root, 'progress.json'), JSON.stringify(results, null, 2));
   }
 }
-await writeFile(join(root, 'verification.json'), JSON.stringify({ status: 'passed', normal, results, cliSignalVerified: process.platform !== 'win32' }, null, 2));
+await writeFile(join(root, 'verification.json'), JSON.stringify({ status: 'passed', normal, results, cliSignalVerified: true, cliSignal: process.platform === 'win32' ? 'CTRL_C_EVENT' : 'SIGINT' }, null, 2));
 console.log(JSON.stringify({ status: 'passed', root }));
