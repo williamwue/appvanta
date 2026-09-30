@@ -33,6 +33,12 @@ Bridge 强制终止：Windows `gradle-cancellation-1790750594684` 在 Worker 285
 
 ## 下一实现单元与验收门槛
 
+Node 监督的首个内部模块 `build-process.ts` 已实现：参数直接传给 spawn，独立进程持有 stdin；AbortSignal、期限或输出上限先关闭输入，宽限期后才强杀拥有的进程。输出按总字节上限写入排他日志并保存摘要，接收超限仍继续排空但不继续保留；退出后最多等待一秒排空管道，后代仍持有管道时返回 outputComplete=false。回执分开记录真实退出码、打断原因、强杀及日志状态，descendantCleanup 始终是 unverified。文件同步或回执保存失败仍会抛错，不能以成功结果释放占用。
+
+Windows 七项真实子进程测试覆盖正常失败、超时后协作退出 0、超量输出、忽略 EOF 后强杀、预先/运行中取消、启动失败及后代持有管道。完整回归为 core 127、Android 119、脚本 48 项通过，1 项 POSIX 用例跳过。`gradle-supervisor-1790752708227` 用该模块编译并运行包内 bridge，确认 Gradle 任务实际执行后触发 AbortSignal，收到 cancelled 回执且未强杀；专属 stop 后外部确认 daemon 退出并归档释放占用。`gradle-cancellation-1790752619180` 也使用该模块执行 stop 与重复回执拒绝检查。三系统 CI 已加入监督器真实取消验证，结果待确认；公共请求/报告接口及恢复仍待实现。
+
+Java 运行时首轮 CI `36682343696` 的 Windows 多任务参数回读得到 `space ?? ; & = literal`，Linux/macOS 主机任务通过。本地强制 windows-1252 默认编码的 `1790752772666` 复现同一失败，说明参数夹具用默认编码写文件丢失中文；改为 setText(..., 'UTF-8') 后同样强制编码的 `1790752794571` 通过。保留中文断言与失败日志，未据此认定托管修正已通过。
+
 Java bridge 已从单任务测试夹具移入 Android 包运行时 `packages/android/runtime/GradleBuildBridge.java`。调用协议为安装目录、项目、专属用户目录、回执路径、任务数量、任务数组、Gradle 参数数组；任务与参数通过 Tooling API 传递，不拼接 shell。回执增加版本、bridge PID、任务数和耗时，并以排他文件创建和文件同步保存。已有回执在执行前拒绝；异常退出留下的部分回执仍应视为未知，不能据此重放构建。它是供执行器使用的内部运行时，尚无公共构建 API、自动恢复或任意派生进程清理承诺。
 
 Windows 使用实际 dist/runtime 文件的验证：`gradle-cancellation-1790752162810` 执行两个任务，中文/空格/特殊字符参数原样往返，成功产物与回执匹配，再次使用回执被拒绝且内容不变；`1790752170829` 验证任务失败。`1790752186363` 父 Node 强杀、`1790752194995` bridge 强杀、`1790752226256` JavaExec EOF 均通过原有取消/清理/占用断言。运行记录绑定 Java 源码 SHA-256，原重复测试实现已移除。包验收检查 tarball 包含 Java 源码，并校验实际安装文件字节与源文件一致；这仍不是 npm/PyPI 正式发布。

@@ -85,6 +85,9 @@ jobs:
           APPVANTA_GRADLE_CANCEL_TASK: failure
           APPVANTA_GRADLE_CANCEL_TRIGGER: complete
         run: node scripts/verify-gradle-cancellation.mjs
+      - name: Verify Node supervisor cancels the packaged Gradle bridge
+        timeout-minutes: 5
+        run: node scripts/verify-gradle-supervisor.mjs
       - name: Verify installed Python SDK
         timeout-minutes: 5
         run: |

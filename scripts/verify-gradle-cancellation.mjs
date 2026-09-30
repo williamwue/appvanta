@@ -6,7 +6,7 @@ import { setTimeout as delay } from 'node:timers/promises';
 import { fileURLToPath } from 'node:url';
 import { promisify } from 'node:util';
 import { resolveGradleInstallation } from './gradle-installation.mjs';
-import { runLoggedCommand } from './logged-command.mjs';
+import { runBuildProcess } from '../packages/android/dist/build-process.js';
 import { createHash } from 'node:crypto';
 import { acquireBuildProject } from '../packages/android/dist/build-ownership.js';
 
@@ -78,7 +78,7 @@ tasks.register('controlledCompletion') {
     }
 }
 tasks.register('verifyArguments') {
-    doLast { file('argument.txt').text = providers.gradleProperty('bridgeValue').get() }
+    doLast { file('argument.txt').setText(providers.gradleProperty('bridgeValue').get(), 'UTF-8') }
 }
 `);
 const classpath = join(installation.home, 'lib', '*');
@@ -206,17 +206,21 @@ try {
     assert.equal(report.bridge.taskCount, tasks.length);
   }
   await writeFile(join(evidence, 'before-stop.json'), JSON.stringify(report, null, 2), { flag: 'wx' });
-  const stopped = await runLoggedCommand({ file: java, args: ['-classpath', installation.launcher, 'org.gradle.launcher.GradleMain', '--stop', '--gradle-user-home', userHome], cwd: project, logPath: join(evidence, 'stop.log'), timeoutMs: 30000 });
+  const stopped = await runBuildProcess({ file: java, args: ['-classpath', installation.launcher, 'org.gradle.launcher.GradleMain', '--stop', '--gradle-user-home', userHome], cwd: project, logPath: join(evidence, 'stop.log'), timeoutMs: 30000 });
   report.stop = stopped;
   assert.equal(stopped.status, 'exited');
   assert.equal(stopped.exitCode, 0);
+  assert.equal(stopped.interruption, null);
+  assert.equal(stopped.logError, null);
+  assert.equal(stopped.outputComplete, true);
   await wait(() => !alive(report.task.pid), 10000, 'isolated Gradle daemon exit');
   report.daemonExited = true;
   if (mode === 'success') {
     const original = await readFile(receipt, 'utf8');
-    const repeated = await runLoggedCommand({ file: java, args: bridgeArgs, cwd: root, logPath: join(evidence, 'repeat-receipt.log'), timeoutMs: 30000 });
+    const repeated = await runBuildProcess({ file: java, args: bridgeArgs, cwd: root, logPath: join(evidence, 'repeat-receipt.log'), timeoutMs: 30000 });
     assert.equal(repeated.status, 'exited');
     assert.notEqual(repeated.exitCode, 0);
+    assert.equal(repeated.interruption, null);
     assert.match(await readFile(join(evidence, 'repeat-receipt.log'), 'utf8'), /Receipt already exists/);
     assert.equal(await readFile(receipt, 'utf8'), original);
     assert.equal(alive(report.task.pid), false);
@@ -240,7 +244,7 @@ try {
     }
   }
   if (report.status !== 'passed') {
-    try { report.fallbackStop = await runLoggedCommand({ file: java, args: ['-classpath', installation.launcher, 'org.gradle.launcher.GradleMain', '--stop', '--gradle-user-home', userHome], cwd: project, logPath: join(evidence, 'fallback-stop.log'), timeoutMs: 30000 }); }
+    try { report.fallbackStop = await runBuildProcess({ file: java, args: ['-classpath', installation.launcher, 'org.gradle.launcher.GradleMain', '--stop', '--gradle-user-home', userHome], cwd: project, logPath: join(evidence, 'fallback-stop.log'), timeoutMs: 30000 }); }
     catch (error) { report.daemonCleanupError = String(error); }
   }
   await writeFile(join(evidence, 'stdout.log'), stdout);
