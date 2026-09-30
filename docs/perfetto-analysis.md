@@ -16,6 +16,8 @@ CLI 最后两个参数为可选的 Python 路径和分析窗口毫秒数；省�
 
 工具解析/下载现放入独立受管进程，继续使用官方固定版本及 SHA-256 校验。Windows 必须先取得 Job Object 所有权，POSIX 使用独立进程组；完成握手后才允许开始解析。取消终止整个解析进程树（包括官方下载器启动的 curl），并在 `initialization.json` 记录 PID、退出状态与取消状态。可能遗留的官方随机 `.tmp` 下载文件不是可用缓存，不自动删除其他进程的缓存或临时文件。处理器启动服务器期间、宿主硬终止和所有系统的完整取消闭环仍待验证。
 
+SQL 请求未返回时的控制器验收：`verify-perfetto-query.py` 加载已保留的实际 trace，在真实处理器执行十亿项递归求和夹具；确认请求持续至少 250 ms 未返回且处理器仍存活，再分别写取消文件、将控制器期限推进至当前时刻。要求请求在 5 秒内以错误退出，解析器与处理器均已退出、清理无错误。Windows `perfetto-cancellation-1790744534049/query-cancellation/` 两条路径分别在 16/15 ms 返回，查询线程均退出；同次正常指标、SDK/MCP 取消、真实 Ctrl+C 和 SDK 宿主强杀检查通过。此验收已接入托管真实 trace 分析入口，Linux/macOS 结果待新 CI；它验证未返回 SQL 的受控终止，不证明所有产品 SQL、完整 110 秒期限等待或查询结果正确性。长查询仅为故障夹具，不进入产品指标。
+
 Windows `perfetto-initialization-1790738166778` 通过官方 downloader + 本地停滞 HTTP 夹具：取消后解析 PID 和实际 curl PID 均退出、没有完成的缓存二进制。该证据使用注入的下载地址，不是公网断网验收。`perfetto-cancellation-1790738167691` 通过正常真实 trace 分析及 SDK/MCP 加载期取消回归；构建、268 项测试和 4 项收尾回归通过。三系统 CI 已加入 `python scripts/verify-perfetto-initialization.py`，托管结果待确认。
 
 同一验收脚本现扩展真实 SDK 路径：从 `analyzePerfetto` 发起分析，在 HTTP 下载已开始时触发 AbortSignal，核对 cancelled、解析进程退出、处理器尚未启动、无成功指标/报告，并独立检查分析 Python、解析进程和 curl PID 已停止。Windows `perfetto-initialization-1790738394038` 通过。输入仅用于经过初始化阶段，不作为可解析 trace 或性能证据；该场景尚未验证 MCP 下载期取消。较早的 Linux CI `36663758987` 已通过直接解析器下载取消，归档 `perfetto-initialization-1790738376530` 已核验，早期快照不包含本次 SDK 扩展。

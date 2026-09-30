@@ -47,6 +47,8 @@ assert.equal(JSON.parse(await readFile(join(normal.output, 'analysis.json'), 'ut
 if (sourceArchive) assert.deepEqual(JSON.parse(await readFile(normal.metricsPath, 'utf8')).metrics, sourceArchive.expectedMetrics, 'Retained trace metrics must match the original device-run analysis');
 const runnable = spawnSync(python, ['scripts/verify-perfetto-runnable.py', '--trace', resolve(source), '--package', options.packageName, '--output', join(root, 'runnable-evidence'), '--window-ms', String(options.windowMs)], { encoding: 'utf8', timeout: 120000 });
 assert.equal(runnable.status, 0, runnable.stderr || String(runnable.error));
+const queryCancellation = spawnSync(python, ['scripts/verify-perfetto-query.py', '--trace', resolve(source), '--output', join(root, 'query-cancellation')], { encoding: 'utf8', timeout: 120000 });
+assert.equal(queryCancellation.status, 0, queryCancellation.stderr || String(queryCancellation.error));
 const pre = new AbortController(); pre.abort(new Error('Pre-cancelled'));
 await assert.rejects(analyzePerfetto({ ...options, python: 'must-not-run', signal: pre.signal }), /Pre-cancelled/);
 // Repeated packet bytes prolong real parser work; no metrics are asserted for this synthetic trace.
