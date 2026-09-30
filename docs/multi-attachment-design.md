@@ -20,7 +20,7 @@ API 37 证据：`.appvanta/runs/multi-share-probe-1790717202494/verification.jso
 - 产品 helper 已使用一般 content URI，仍需验证更多 provider 可见性与授权。
 - 具名操作与持久回执已实现，仍需补宿主、helper 与 Activity 的全部中断窗口；不能自动重放可能已经交付的附件。
 - 取消和失败时释放本次准备的授权；验证来源提前撤销、接收者缺失、重复或乱序请求，以及选择器取消。
-- 验证数量上限、多种 MIME、不同来源 provider、API 35、其他语言和 OEM。真机仍待设备可用。
+- 16 项数量上限已在 API 37 通过下述 CLI 验收；多种 MIME、不同来源 provider、API 35 上限、其他语言和 OEM 仍待验证。真机仍待设备可用。
 - 本地文件上传、托管 provider 与回收另需实现，当前只处理已有 content URI。
 
 ## 复验
@@ -47,3 +47,5 @@ node scripts/verify-multi-share-probe.mjs emulator-5554
 系统选择器修复与验收：API 37 英文环境的 `.appvanta/runs/share-helper-1790729412544/verification.json` 通过取消无交付、重新打开并选择接收应用、两项内容摘要及只读授权检查，连同 CLI/MCP、两种宿主强杀和三种只读回执查询均通过，测试文件已清理且租约为空。helper 现在在无显式目标包时等待 Activity result 再结束，避免系统选择器尚未完成转授就撤销临时授权。取消后回执仍为 `dispatched`，明确证明启动回执不等同实际交付。
 
 修复前运行 `share-helper-1790728979917` 在点击 `Just once` 后未启动接收应用；logcat 明确记录 helper UID 无权转授来源 URI。修复后首次运行 `share-helper-1790729203283` 已实际收到正确内容，但测试将系统附加的 Activity 启动标志与直接启动完全比较而失败；改为逐位要求 READ 且禁止 WRITE、PERSISTABLE、PREFIX，保留完整原始标志。两次失败及具名文件清理记录保留，未当作通过。其他语言、多 provider、数量上限、接收 Activity 未返回前再次分享及 OEM 仍待验收。
+
+后续数量上限验收：API 37 的 `.appvanta/runs/share-limit-1790729724602/verification.json` 通过正式 CLI Flow 一次发送 16 项。独立接收应用核对 16 个 URI 的顺序、每项 4096 字节及不同的预期 SHA-256、16 项 ClipData、读取授权和写入拒绝；URI 授权位仅允许 READ。产品回执包含相同 16 个 URI 且状态为 `dispatched`。所有来源文件已逐项撤销并删除，设备租约为空。该证据限于同一测试 provider、`application/octet-stream` 和显式接收应用。复验命令为 `node scripts/verify-share-limit.mjs emulator-5554`，须先构建 source、receiver、helper 三个 APK；API 35 同一用例已加入 CI，尚待托管结果。

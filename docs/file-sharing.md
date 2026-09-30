@@ -55,6 +55,8 @@ API 37 上已通过真实 CLI/MCP 查询 `prepared`、`cancelled` 和 `dispatche
 
 多附件选择器、多 provider、数量边界、跨用户、真机/OEM 和宿主/Activity 各中断窗口仍需扩展验收。详见 [多附件机制与边界](multi-attachment-design.md)。
 
+数量上限补充：API 37 通过 CLI Flow 实际交付 16 份不同内容的附件，逐项核对顺序、内容摘要和只读权限，全部来源文件已撤销授权并删除。证据为 `.appvanta/runs/share-limit-1790729724602/verification.json`；该验收仅覆盖显式测试接收者、同一 provider 和 `application/octet-stream`。
+
 平台依据：[Android 文件分享](https://developer.android.com/training/secure-file-sharing)、[URI 读取授权](https://developer.android.com/reference/androidx/core/content/FileProvider)、[provider 可见性声明](https://developer.android.com/training/package-visibility/declaring)。
 
 MCP 公布的 JSON schema 与运行时解析器均拒绝 fragment，包括末尾空 `#`；query 和编码后的 `%23` 仍可使用。接口一致性回归覆盖这几类 URI，避免客户端依据 schema 构造运行时必然拒绝的附件动作。

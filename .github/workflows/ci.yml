@@ -194,6 +194,9 @@ jobs:
         run: |
           python scripts/build-segment-clock.py --fixture share-helper
           node scripts/verify-share-helper.mjs emulator-5554
+      - name: Verify maximum attachment delivery
+        timeout-minutes: 5
+        run: node scripts/verify-share-limit.mjs emulator-5554
       - name: Verify application accelerometer callbacks
         timeout-minutes: 4
         run: |
