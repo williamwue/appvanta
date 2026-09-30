@@ -6,6 +6,7 @@ import { fileURLToPath } from 'node:url';
 import { setTimeout as delay } from 'node:timers/promises';
 import { inspectDeviceLock } from '../packages/core/dist/index.js';
 import { readMcpResponses } from './mcp-response-reader.mjs';
+import { inspectStartingDeviceLease } from './mcp-flow-startup.mjs';
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const deviceId = process.argv[2];
@@ -45,7 +46,12 @@ try {
   send({ id: 2, method: 'tools/call', params: { name: 'run_flow', arguments: { deviceId, flow: { version: 1, name: 'MCP EOF verification', steps: [{ description: 'Wait for absent application', action }] } } } });
   const lease = await wait(async () => {
     assert(!exited(), `MCP exited before action: ${stderr}`);
-    const state = await inspectDeviceLock(deviceId);
+    const observed = await inspectStartingDeviceLease(deviceId);
+    if (observed.status === 'incomplete') {
+      report.incompleteLeaseReads = (report.incompleteLeaseReads ?? 0) + 1;
+      return;
+    }
+    const state = observed.status === 'ready' ? observed.state : null;
     if (!state?.lease.runDirectory) return;
     assert.equal(state.owner, 'alive');
     assert.equal(state.lease.pid, child.pid);
