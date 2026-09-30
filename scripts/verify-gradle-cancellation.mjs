@@ -13,7 +13,7 @@ const installation = resolveGradleInstallation(process.argv[2]);
 const mode = process.env.APPVANTA_GRADLE_CANCEL_TASK ?? 'wait';
 if (!['wait', 'javaexec', 'worker'].includes(mode)) throw new Error('APPVANTA_GRADLE_CANCEL_TASK must be wait, javaexec or worker');
 const trigger = process.env.APPVANTA_GRADLE_CANCEL_TRIGGER ?? 'eof';
-if (!['eof', 'bridge-kill'].includes(trigger)) throw new Error('APPVANTA_GRADLE_CANCEL_TRIGGER must be eof or bridge-kill');
+if (!['eof', 'bridge-kill', 'owner-kill'].includes(trigger)) throw new Error('APPVANTA_GRADLE_CANCEL_TRIGGER must be eof, bridge-kill or owner-kill');
 if (!process.env.JAVA_HOME) throw new Error('JAVA_HOME is required');
 const java = join(process.env.JAVA_HOME, 'bin', process.platform === 'win32' ? 'java.exe' : 'java');
 const javac = join(process.env.JAVA_HOME, 'bin', process.platform === 'win32' ? 'javac.exe' : 'javac');
@@ -67,13 +67,17 @@ const classpath = join(installation.home, 'lib', '*');
 await promisify(execFile)(javac, ['-classpath', classpath, '-d', classes, join(root, 'scripts/fixtures/GradleCancellationProbe.java'), join(root, 'scripts/fixtures/GradleExecChild.java')], { windowsHide: true, timeout: 30000 });
 const receipt = join(evidence, 'bridge.json');
 const taskName = { wait: 'waitForCancellation', javaexec: 'childProcess', worker: 'isolatedWorker' }[mode];
-const child = spawn(java, ['-classpath', classes + delimiter + classpath, 'GradleCancellationProbe', installation.home, project, userHome, receipt, taskName], { cwd: root, windowsHide: true, stdio: ['pipe', 'pipe', 'pipe'] });
+const bridgeArgs = ['-classpath', classes + delimiter + classpath, 'GradleCancellationProbe', installation.home, project, userHome, receipt, taskName];
+const ownershipPath = join(evidence, 'owner.json');
+const child = trigger === 'owner-kill'
+  ? spawn(process.execPath, [join(root, 'scripts/fixtures/gradle-bridge-owner.mjs'), ownershipPath, java, ...bridgeArgs], { cwd: root, windowsHide: true, stdio: ['pipe', 'pipe', 'pipe'] })
+  : spawn(java, bridgeArgs, { cwd: root, windowsHide: true, stdio: ['pipe', 'pipe', 'pipe'] });
 let stdout = '', stderr = '', spawnError;
 child.stdout.on('data', chunk => { stdout += chunk; });
 child.stderr.on('data', chunk => { stderr += chunk; });
 child.on('error', error => { spawnError = error; });
 const exited = () => child.exitCode !== null || child.signalCode !== null;
-const report = { status: 'running', mode, trigger, evidence, project, userHome, installation, bridgePid: child.pid };
+const report = { status: 'running', mode, trigger, evidence, project, userHome, installation, ...(trigger === 'owner-kill' ? { ownerPid: child.pid } : { bridgePid: child.pid }) };
 const wait = async (test, ms, description) => {
   const deadline = Date.now() + ms;
   do {
@@ -86,6 +90,19 @@ const wait = async (test, ms, description) => {
 };
 const alive = pid => { try { process.kill(pid, 0); return true; } catch (error) { if (error.code === 'ESRCH') return false; throw error; } };
 try {
+  if (trigger === 'owner-kill') {
+    report.ownership = await wait(async () => {
+      assert(!exited(), 'Owner exited before publishing bridge ownership');
+      try { return JSON.parse(await readFile(ownershipPath, 'utf8')); }
+      catch (error) { if (error.code === 'ENOENT' || error instanceof SyntaxError) return; throw error; }
+    }, 10000, 'Node owner bridge handshake');
+    assert.equal(report.ownership.ownerPid, child.pid);
+    assert.equal(report.ownership.parentPid, process.pid);
+    assert.equal(report.ownership.bridgeDetached, true);
+    report.bridgePid = report.ownership.bridgePid;
+    assert.notEqual(report.bridgePid, child.pid);
+    assert(alive(report.bridgePid));
+  }
   report.task = await wait(async () => {
     assert(!exited(), `Bridge exited early; inspect ${join(evidence, 'stderr.log')}`);
     try { return JSON.parse(await readFile(join(project, 'executing.json'), 'utf8')); }
@@ -101,16 +118,26 @@ try {
     }, 30000, `${mode} child execution`);
     assert.notEqual(report.worker.pid, report.task.pid);
     assert.notEqual(report.worker.pid, child.pid);
+    assert.notEqual(report.worker.pid, report.bridgePid);
     assert(alive(report.worker.pid));
   }
   await writeFile(join(evidence, 'before-interruption.json'), JSON.stringify(report, null, 2), { flag: 'wx' });
   const start = Date.now();
-  if (trigger === 'eof') {
-    child.stdin.end();
-    await wait(exited, 20000, 'Tooling API cancellation');
+  if (trigger !== 'bridge-kill') {
+    if (trigger === 'owner-kill') {
+      assert(child.kill('SIGKILL'), 'Owned Node force termination was not delivered');
+      await wait(exited, 10000, 'Node owner exit');
+      assert.equal(child.signalCode, 'SIGKILL');
+      report.ownerExit = { code: child.exitCode, signal: child.signalCode, elapsedMs: Date.now() - start };
+      await wait(() => !alive(report.bridgePid), 20000, 'Java bridge cancellation after Node owner death');
+      report.bridgeExited = true;
+    } else {
+      child.stdin.end();
+      await wait(exited, 20000, 'Tooling API cancellation');
+      assert.equal(child.exitCode, 0);
+    }
     report.cancellationMs = Date.now() - start;
     report.bridge = JSON.parse(await readFile(receipt, 'utf8'));
-    assert.equal(child.exitCode, 0);
     assert.equal(report.bridge.status, 'cancelled');
     assert.equal(report.bridge.cancellationRequested, true);
     assert.equal(report.bridge.failureClass, 'org.gradle.tooling.BuildCancelledException');
@@ -164,5 +191,7 @@ try {
   await writeFile(join(evidence, 'stdout.log'), stdout);
   await writeFile(join(evidence, 'stderr.log'), stderr);
   await writeFile(join(evidence, 'verification.json'), JSON.stringify(report, null, 2));
+  child.stdout.destroy();
+  child.stderr.destroy();
   console.log(JSON.stringify({ status: report.status, evidence, cancellationMs: report.cancellationMs }));
 }

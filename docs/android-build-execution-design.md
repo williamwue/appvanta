@@ -20,6 +20,10 @@ Bridge 强制终止：Windows `gradle-cancellation-1790750594684` 在 Worker 285
 
 ## 选定的产品结构
 
+父 Node 强杀的 Windows 原型：未独立启动 bridge 的 `gradle-cancellation-1790750900231` 中，Node 被强杀后 bridge 也退出，未留下 bridge.json；该失败和回退 stop 日志保留，尚不能仅据此确定 Windows 底层终止机制。将 bridge 以 `detached: true` 启动并继续持有 stdin 管道后，`1790751242337` 在真实 Worker 执行期间强杀 Node，312 ms 内观察到 bridge 退出及 BuildCancelledException 回执。Worker 已退出，daemon 仍存活；仅停止本次专属用户目录后确认 daemon 与 Worker 均已退出。所有权回执记录父子 PID 和 detached 设置。该外部观察不能获取已孤立 bridge 的退出码，不宣称其退出码为 0。
+
+`APPVANTA_GRADLE_CANCEL_TRIGGER=owner-kill` 已加入三系统 CI，托管结果待验证。本机证据不覆盖独立 bridge 自身被强杀、任意项目派生进程或整个进程组被终止；执行状态仍需真实回执，缺失回执保持失败。
+
 - `BuildRequest` 保存规范化项目目录、明确的 Gradle/JDK 安装、任务数组、超时和运行 ID。任务按参数传递，不拼接 shell。版本与启动文件摘要绑定运行记录。
 - `BuildRun` 分别记录执行状态、取消请求、Gradle 返回结果及 cleanup 状态。`cancelled` 不能隐含 `cleanup=verified`；未知清理保留项目占用与诊断，不自动宣布可重新执行。
 - 每个项目采用专属 Gradle 用户目录及有持久所有权的项目锁，复用该目录的构建串行执行。缓存复用与锁恢复需要单独验收；不得向用户共享的默认 Gradle 用户目录发全局 stop。

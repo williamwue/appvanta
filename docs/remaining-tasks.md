@@ -1,5 +1,7 @@
 # AppVanta 当前状态与剩余任务
 
+Gradle 父进程强杀补充：Windows `gradle-cancellation-1790750900231` 暴露 bridge 同时退出且取消回执缺失。独立启动 bridge 后 `1790751242337` 在实际 Worker 运行时强杀 Node，312 ms 内得到取消回执；专属目录 stop 后确认 daemon/Worker 退出。三系统 CI 已接入待验，产品执行器及其占用恢复仍待完成，39 项计数不变；见 android-build-execution-design.md。
+
 更新：2026-09-30。本文件汇总当前有界验收；阶段清单中的逐次记录作为带日期的历史证据，旧段落中的“待完成”应结合本文件及后续验收读取。最终目标仍是覆盖固定版本 Argent / ARTEMIS 的全部公开可验证功能，不因本轮收尾缩小范围。以下 39 项清单保持完整，3 项已完成、36 项仍待办。
 
 宿主断连修正已获三系统真实加载期证据：`36672792893` 的 Android 和三平台 Perfetto 分析任务通过，246 个分析归档文件完整性核验通过。Linux/macOS 强杀 SDK 宿主后 48 ms 清理且记录 ownerDisconnected；Windows 外部退出观测 8 ms。SQL 未返回时取消及提前触发期限也通过，详见 perfetto-analysis.md。该轮 Windows build 仍有旧夹具握手失败，不能称为整体全绿；后续 Python 请求取消与 MCP EOF 仍按各自新快照验证，计数保持 3/39。
