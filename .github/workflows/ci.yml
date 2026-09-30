@@ -61,6 +61,12 @@ jobs:
         env:
           APPVANTA_GRADLE_CANCEL_TASK: worker
         run: node scripts/verify-gradle-cancellation.mjs
+      - name: Verify scoped recovery after Gradle bridge force termination
+        timeout-minutes: 5
+        env:
+          APPVANTA_GRADLE_CANCEL_TASK: worker
+          APPVANTA_GRADLE_CANCEL_TRIGGER: bridge-kill
+        run: node scripts/verify-gradle-cancellation.mjs
       - name: Verify installed Python SDK
         timeout-minutes: 5
         run: |

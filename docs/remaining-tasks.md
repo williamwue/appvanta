@@ -46,6 +46,8 @@ API 37 / Android 17 已验证裁决后步骤边界再次崩溃、只读等待执
 
 ## 本轮已完成的范围
 
+- Gradle bridge 强杀原型取得 Windows 证据：`gradle-cancellation-1790750594684` 的真实 Worker 执行期间强杀 bridge，确认回执缺失；随后仅停止已核对真实路径的专属用户目录，确认 Worker/daemon 退出。已保存中断前及停止前快照，三系统 CI 已接入该场景；这是进程清理原型，不代表缺失回执的构建状态或产品恢复接口已完成。
+
 - 构建取消原型新增实际 JavaExec 与 Worker API processIsolation 场景：Windows 分别在 251/296 ms 返回取消，确认子 JVM/Worker 退出，随后仅停止专属用户目录的 daemon 并确认退出。Worker 参数夹具首次失败与修正记录保留；三系统 CI 已加入两种场景，尚待托管验收。任意派生进程、bridge 强杀及产品执行器仍未完成，见 android-build-execution-design.md。
 
 - 构建执行器的 Tooling API 原型已取得 Windows 真正任务取消证据：`gradle-cancellation-1790750011334` 客户端输入关闭后 246 ms 返回 BuildCancelledException，但 daemon 仍活着；针对专属 Gradle 用户目录停止后确认退出。三系统 CI 已接入该原型，结果待确认。此证据不等于产品执行器或任意 Worker/派生进程清理完成，后续状态与占用设计见 android-build-execution-design.md。

@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { execFile, spawn } from 'node:child_process';
-import { mkdir, readFile, writeFile } from 'node:fs/promises';
+import { mkdir, readFile, realpath, writeFile } from 'node:fs/promises';
 import { delimiter, dirname, join, resolve } from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
 import { fileURLToPath } from 'node:url';
@@ -12,6 +12,8 @@ const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const installation = resolveGradleInstallation(process.argv[2]);
 const mode = process.env.APPVANTA_GRADLE_CANCEL_TASK ?? 'wait';
 if (!['wait', 'javaexec', 'worker'].includes(mode)) throw new Error('APPVANTA_GRADLE_CANCEL_TASK must be wait, javaexec or worker');
+const trigger = process.env.APPVANTA_GRADLE_CANCEL_TRIGGER ?? 'eof';
+if (!['eof', 'bridge-kill'].includes(trigger)) throw new Error('APPVANTA_GRADLE_CANCEL_TRIGGER must be eof or bridge-kill');
 if (!process.env.JAVA_HOME) throw new Error('JAVA_HOME is required');
 const java = join(process.env.JAVA_HOME, 'bin', process.platform === 'win32' ? 'java.exe' : 'java');
 const javac = join(process.env.JAVA_HOME, 'bin', process.platform === 'win32' ? 'javac.exe' : 'javac');
@@ -25,7 +27,7 @@ await mkdir(evidence, { recursive: true });
 await writeFile(join(project, 'settings.gradle'), "rootProject.name = 'AppVantaCancellationProbe'\n");
 await writeFile(join(project, 'build.gradle'), `tasks.register('waitForCancellation') {
     doLast {
-        file('executing.json').text = groovy.json.JsonOutput.toJson([pid: ProcessHandle.current().pid(), phase: 'executing'])
+        file('executing.json').text = groovy.json.JsonOutput.toJson([pid: ProcessHandle.current().pid(), phase: 'executing', userHome: gradle.gradleUserHomeDir.absolutePath])
         Thread.sleep(60000)
     }
 }
@@ -34,7 +36,7 @@ tasks.register('childProcess', JavaExec) {
     mainClass = 'GradleExecChild'
     args file('child.json').absolutePath
     doFirst {
-        file('executing.json').text = groovy.json.JsonOutput.toJson([pid: ProcessHandle.current().pid(), phase: 'executing'])
+        file('executing.json').text = groovy.json.JsonOutput.toJson([pid: ProcessHandle.current().pid(), phase: 'executing', userHome: gradle.gradleUserHomeDir.absolutePath])
     }
 }
 interface ProbeParameters extends org.gradle.workers.WorkParameters {
@@ -51,7 +53,7 @@ abstract class ProbeTask extends DefaultTask {
     abstract org.gradle.workers.WorkerExecutor getWorkerExecutor()
     @TaskAction
     void runProbe() {
-        project.file('executing.json').text = groovy.json.JsonOutput.toJson([pid: ProcessHandle.current().pid(), phase: 'executing'])
+        project.file('executing.json').text = groovy.json.JsonOutput.toJson([pid: ProcessHandle.current().pid(), phase: 'executing', userHome: project.gradle.gradleUserHomeDir.absolutePath])
         def destination = project.layout.projectDirectory.file('child.json')
         workerExecutor.processIsolation().submit(ProbeAction) { parameters ->
             parameters.receipt.set(destination)
@@ -71,7 +73,7 @@ child.stdout.on('data', chunk => { stdout += chunk; });
 child.stderr.on('data', chunk => { stderr += chunk; });
 child.on('error', error => { spawnError = error; });
 const exited = () => child.exitCode !== null || child.signalCode !== null;
-const report = { status: 'running', mode, evidence, project, userHome, installation, bridgePid: child.pid };
+const report = { status: 'running', mode, trigger, evidence, project, userHome, installation, bridgePid: child.pid };
 const wait = async (test, ms, description) => {
   const deadline = Date.now() + ms;
   do {
@@ -90,6 +92,7 @@ try {
     catch (error) { if (error.code === 'ENOENT' || error instanceof SyntaxError) return; throw error; }
   }, 120000, 'actual Gradle task execution');
   assert(alive(report.task.pid));
+  assert.equal(await realpath(report.task.userHome), await realpath(userHome));
   if (mode !== 'wait') {
     report.worker = await wait(async () => {
       assert(!exited(), `Bridge exited before ${mode} child; inspect ${join(evidence, 'stderr.log')}`);
@@ -100,23 +103,37 @@ try {
     assert.notEqual(report.worker.pid, child.pid);
     assert(alive(report.worker.pid));
   }
+  await writeFile(join(evidence, 'before-interruption.json'), JSON.stringify(report, null, 2), { flag: 'wx' });
   const start = Date.now();
-  child.stdin.end();
-  await wait(exited, 20000, 'Tooling API cancellation');
-  report.cancellationMs = Date.now() - start;
-  report.bridge = JSON.parse(await readFile(receipt, 'utf8'));
-  assert.equal(child.exitCode, 0);
-  assert.equal(report.bridge.status, 'cancelled');
-  assert.equal(report.bridge.cancellationRequested, true);
-  assert.equal(report.bridge.failureClass, 'org.gradle.tooling.BuildCancelledException');
-  if (report.worker) {
-    report.workerAliveAfterCancellation = alive(report.worker.pid);
-    if (mode === 'javaexec') {
-      await wait(() => !alive(report.worker.pid), 10000, 'JavaExec child exit before daemon stop');
-      report.workerExitedBeforeStop = true;
+  if (trigger === 'eof') {
+    child.stdin.end();
+    await wait(exited, 20000, 'Tooling API cancellation');
+    report.cancellationMs = Date.now() - start;
+    report.bridge = JSON.parse(await readFile(receipt, 'utf8'));
+    assert.equal(child.exitCode, 0);
+    assert.equal(report.bridge.status, 'cancelled');
+    assert.equal(report.bridge.cancellationRequested, true);
+    assert.equal(report.bridge.failureClass, 'org.gradle.tooling.BuildCancelledException');
+    if (report.worker) {
+      report.workerAliveAfterCancellation = alive(report.worker.pid);
+      if (mode === 'javaexec') {
+        await wait(() => !alive(report.worker.pid), 10000, 'JavaExec child exit before daemon stop');
+        report.workerExitedBeforeStop = true;
+      }
     }
+    report.daemonAliveAfterCancellation = alive(report.task.pid);
+  } else {
+    assert(child.kill('SIGKILL'), 'Owned bridge force termination was not delivered');
+    await wait(exited, 10000, 'forced bridge exit');
+    report.bridgeExit = { code: child.exitCode, signal: child.signalCode, elapsedMs: Date.now() - start };
+    assert.notEqual(child.exitCode, 0);
+    assert.equal(child.signalCode, 'SIGKILL');
+    await assert.rejects(readFile(receipt, 'utf8'), error => error.code === 'ENOENT');
+    report.bridgeReceiptMissing = true;
+    await delay(500);
+    report.afterBridgeKill = { elapsedMs: Date.now() - start, daemonAlive: alive(report.task.pid), ...(report.worker ? { workerAlive: alive(report.worker.pid) } : {}) };
   }
-  report.daemonAliveAfterCancellation = alive(report.task.pid);
+  await writeFile(join(evidence, 'before-stop.json'), JSON.stringify(report, null, 2), { flag: 'wx' });
   const stopped = await runLoggedCommand({ file: java, args: ['-classpath', installation.launcher, 'org.gradle.launcher.GradleMain', '--stop', '--gradle-user-home', userHome], cwd: project, logPath: join(evidence, 'stop.log'), timeoutMs: 30000 });
   report.stop = stopped;
   assert.equal(stopped.status, 'exited');

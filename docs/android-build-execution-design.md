@@ -14,6 +14,10 @@ Windows/JDK 21、Gradle 8.13 的 `gradle-cancellation-1790750011334` 使用正�
 
 Worker 初次运行 `1790750295584` 在提交参数配置时失败，尚未启动 Worker；已保留日志和专属 stop 的退出 0 回执。修正 WorkQueue.submit 的参数 closure 后复验通过，不将夹具失败算作产品缺陷。`APPVANTA_GRADLE_CANCEL_TASK` 现支持 wait/javaexec/worker，三系统 CI 分别执行三种原型；新增两种的托管结果待确认。
 
+Bridge 强制终止：Windows `gradle-cancellation-1790750594684` 在 Worker 28588 与 daemon 32516 已实际执行、并核对 Gradle 自报用户目录的真实路径后强杀拥有的 bridge。bridge 61 ms 退出，未生成回执；576 ms 观测时 Worker 已退出、daemon 仍存活。专属目录 stop 在 605 ms 退出 0，之后确认两者均已退出。`before-interruption.json` 与 `before-stop.json` 保留两个边界的原始快照。此结果是缺少执行回执时的定向进程清理证据，不把该次构建记为 passed/cancelled，不证明未知写入可以重放；原型总状态 passed 表示上述验收断言通过。
+
+`APPVANTA_GRADLE_CANCEL_TRIGGER=bridge-kill` 用于该原型，默认 eof 仍要求实际 BuildCancelledException 回执；三系统 CI 新增 Worker 运行中 bridge 强杀场景，托管结果待确认。尚未验证父 Node 强杀、daemon 停止失败、其他项目不受影响及项目状态恢复。
+
 ## 选定的产品结构
 
 - `BuildRequest` 保存规范化项目目录、明确的 Gradle/JDK 安装、任务数组、超时和运行 ID。任务按参数传递，不拼接 shell。版本与启动文件摘要绑定运行记录。
@@ -27,6 +31,6 @@ Worker 初次运行 `1790750295584` 在提交参数配置时失败，尚未启�
 
 由一个写入者负责 Android 包的执行器、Java runtime bridge 和共享报告类型；CLI/MCP 在 SDK 生命周期通过后接入，同一项目的状态文件修改串行进行。现有跨平台 CI 和设备验收可以独立运行，互不占用这套专属 Gradle 用户目录。
 
-先完成 JavaExec/Worker 的托管验收，并补父 Node 退出、bridge 强杀、取消与正常完成竞争、专属 daemon 停止失败及重复恢复，再实现带占用保护的 SDK。验收必须证明无重复构建、未确认清理不释放占用、其他项目及用户默认 daemon 不被停止。随后提供 CLI/MCP 执行和取消，并将实际 Android 两模块 APK 构建从验证专用入口迁移到产品入口。
+先完成 JavaExec/Worker 与 bridge 强杀的托管验收，并补父 Node 退出、取消与正常完成竞争、专属 daemon 停止失败及重复恢复，再实现带占用保护的 SDK。验收必须证明无重复构建、未确认清理不释放占用、其他项目及用户默认 daemon 不被停止。随后提供 CLI/MCP 执行和取消，并将实际 Android 两模块 APK 构建从验证专用入口迁移到产品入口。
 
 恢复与清理不能仅靠放宽超时。对无法控制的派生进程或不合作任务，执行器应返回明确的未恢复状态和证据；其完整支持仍属于原清单范围。当前原型不改变 39 项完成计数。
