@@ -7,8 +7,9 @@ import { setTimeout as delay } from 'node:timers/promises';
 import { analyzePerfetto } from '../packages/android/dist/index.js';
 import { readMcpResponses } from './mcp-response-reader.mjs';
 
-const [root, python, client] = process.argv.slice(2);
+const [root, python, client, phase = 'download'] = process.argv.slice(2);
 assert(root && python && ['sdk', 'mcp'].includes(client));
+assert(['download', 'startup'].includes(phase));
 const options = { trace: join(root, 'input.trace'), packageName: 'dev.appvanta.fixture', python };
 const controller = new AbortController(), before = new Set(await readdir('.appvanta/runs'));
 let child, exited, pending, finished = false, rpcOutput = '';
@@ -20,8 +21,8 @@ const stopped = async pid => {
   try { process.kill(pid, 0); return false; } catch (error) { if (error.code === 'ESRCH') return true; throw error; }
 };
 const cancel = () => {
-  if (client === 'sdk') controller.abort(new Error('Cancel SDK during actual tool download'));
-  else if (child && child.exitCode === null && child.signalCode === null) send({ jsonrpc: '2.0', method: 'notifications/cancelled', params: { requestId: 2, reason: 'Cancel during actual tool download' } });
+  if (client === 'sdk') controller.abort(new Error(`Cancel SDK during ${phase}`));
+  else if (child && child.exitCode === null && child.signalCode === null) send({ jsonrpc: '2.0', method: 'notifications/cancelled', params: { requestId: 2, reason: `Cancel during ${phase}` } });
 };
 try {
   if (client === 'sdk') {
@@ -38,11 +39,11 @@ try {
   let entered = false;
   const deadline = Date.now() + 15000;
   while (Date.now() < deadline && !finished) {
-    try { await access(join(root, 'http-entered')); entered = true; break; } catch {}
+    try { await access(join(root, phase === 'startup' ? 'started.json' : 'http-entered')); entered = true; break; } catch {}
     await delay(10);
   }
-  cancel();
-  assert(entered, 'Downloader did not reach HTTP checkpoint');
+  const requestedAt = Date.now(); cancel();
+  assert(entered, `Analysis did not reach ${phase} checkpoint`);
   const names = (await readdir('.appvanta/runs', { withFileTypes: true })).filter(entry => entry.isDirectory() && entry.name.startsWith('perfetto-analysis-') && !before.has(entry.name)).map(entry => entry.name);
   assert.equal(names.length, 1, 'Expected exactly one owned analysis');
   const output = resolve('.appvanta/runs', names[0]);
@@ -59,10 +60,16 @@ try {
   }
   assert.equal(summary?.status, 'cancelled');
   assert.equal(summary.cancellation.resolverExited, true);
-  assert.equal(summary.cancellation.processorPid, null);
+  if (phase === 'download') assert.equal(summary.cancellation.processorPid, null);
+  else {
+    assert.equal(summary.cancellation.processorExited, true);
+    assert.equal(JSON.parse(await readFile(join(output, 'processor.json'), 'utf8')).phase, 'starting-server');
+    assert(await stopped(summary.cancellation.processorPid));
+    assert(Date.now() - requestedAt < 5000, 'Startup cancellation waited for the readiness timeout');
+  }
   assert.equal(summary.cancellation.cleanupError, null);
-  for (const name of ['metrics.json', 'report.md', 'processor.json']) await assert.rejects(access(join(output, name)));
-  const download = JSON.parse(await readFile(join(root, 'child.json'), 'utf8'));
+  for (const name of ['metrics.json', 'report.md', ...(phase === 'download' ? ['processor.json'] : [])]) await assert.rejects(access(join(output, name)));
+  const download = JSON.parse(await readFile(join(root, phase === 'startup' ? 'started.json' : 'child.json'), 'utf8'));
   for (const pid of [initialization.analysisPid, initialization.pid, download.pid]) assert(await stopped(pid), `Owned process ${pid} remains alive`);
   if (client === 'mcp') {
     const listed = readMcpResponses(child.stdout, [3]);
@@ -70,8 +77,9 @@ try {
     assert((await listed)[0].result.tools.length > 0);
     assert(!rpcOutput.trim().split('\n').map(JSON.parse).some(message => message.id === 2));
   }
-  console.log(JSON.stringify({ status: 'passed', client, output, initialization, cancellation: summary.cancellation,
-    downloadPid: download.pid, ...(client === 'mcp' ? { cancelledResponseSuppressed: true, toolsListAfterCancel: true } : {}) }));
+  console.log(JSON.stringify({ status: 'passed', client, phase, output, initialization, cancellation: summary.cancellation,
+    elapsedMs: Date.now() - requestedAt, ...(phase === 'startup' ? { fixturePid: download.pid } : { downloadPid: download.pid }),
+    ...(client === 'mcp' ? { cancelledResponseSuppressed: true, toolsListAfterCancel: true } : {}) }));
 } finally {
   cancel();
   if (pending) await pending;

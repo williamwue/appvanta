@@ -1,7 +1,8 @@
 import assert from 'node:assert/strict';
-import { spawn } from 'node:child_process';
+import { spawn, execFile } from 'node:child_process';
+import { promisify } from 'node:util';
 import { once } from 'node:events';
-import { mkdir, readFile, writeFile, chmod, access } from 'node:fs/promises';
+import { mkdir, readFile, writeFile, chmod, access, unlink } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
 
@@ -44,6 +45,17 @@ try {
   const verification = { status: 'passed', scope: 'direct-python-unready-server-cancellation', root, elapsedMs,
     fixturePid: processInfo.pid, fixtureExited: true, analysis, stdout, stderr,
     limitation: 'Direct Python startup cancellation with a non-serving executable; not SDK/MCP startup or real server readiness' };
+  const injection = join(root, 'fixture'); await mkdir(injection);
+  await writeFile(join(injection, 'sitecustomize.py'), `import os\nfrom perfetto.trace_processor.platform import PlatformDelegate\nPlatformDelegate.get_shell_path = lambda self, bin_path, fetch_latest=False: os.environ['APPVANTA_STARTUP_EXECUTABLE']\n`);
+  verification.clients = [];
+  for (const client of ['sdk', 'mcp']) {
+    await unlink(checkpoint);
+    const result = await promisify(execFile)(process.execPath, ['scripts/verify-perfetto-initialization-client.mjs', root, python, client, 'startup'],
+      { windowsHide: true, encoding: 'utf8', timeout: 45000, env: { ...process.env, PYTHONPATH: injection, APPVANTA_STARTUP_EXECUTABLE: fixture } });
+    verification.clients.push(JSON.parse(result.stdout));
+  }
+  verification.scope = 'direct-python-sdk-mcp-unready-server-cancellation';
+  verification.limitation = 'Non-serving executable startup fixture; real trace readiness is covered by separate analysis regressions';
   await writeFile(join(root, 'verification.json'), JSON.stringify(verification, null, 2));
   console.log(JSON.stringify({ status: 'passed', root, elapsedMs }));
 } catch (error) {

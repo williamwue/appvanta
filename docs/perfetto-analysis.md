@@ -43,7 +43,7 @@ Windows `perfetto-initialization-1790738166778` 通过官方 downloader + 本地
 | MCP 下载期，取消后继续处理请求 | 已验证 | 已验证 | 已验证 |
 | SDK/MCP 真实 trace 加载期 | 已验证 | 已验证 | 待验收 |
 | CLI 真实中断信号，trace 加载期 | 待验收 | 已验证 SIGINT | 待验收 |
-| 处理器服务器启动期间 | 直接 Python 未就绪夹具通过；SDK/MCP 待验收 | 待验收 | 待验收 |
+| 处理器服务器启动期间 | 直接 Python、SDK/MCP 未就绪夹具通过 | 待验收 | 待验收 |
 | 宿主硬终止后的进程回收 | 待验收 | 待验收 | 待验收 |
 
 MCP 下载期三系统归档：CI `36664809527` 的主机任务全部通过，每个平台各 30 个文件完成大小/SHA-256 核验。Windows `perfetto-initialization-1790739379590`、Linux `1790739225958`、macOS `1790739232354` 均确认取消后分析 Python/解析器/curl 停止、无成功报告、取消请求响应被抑制、后续 `tools/list` 成功。它们是受控本地 HTTP 夹具证据，不是公网断网或启动服务器阶段证据。
@@ -81,6 +81,8 @@ Windows 真实验证 `perfetto-cancellation-1790736192243/verification.json` 通
 复验：`node scripts/verify-perfetto-cancellation.mjs <受控夹具trace> <perfetto-python>`。Linux CI 另验证 CLI 的真实 SIGINT；Windows 跳过这项并明确记录 `cliSignalVerified: false`。构建、268 项测试及四包干净安装/重装/卸载检查通过，最新 Python 清理确认分支已复验；跨版本迁移不在本次重装检查范围内。
 
 ## 固定工作量多次采样
+
+启动期客户端验收扩展：Windows `perfetto-startup-1790740002182` 通过直接 Python、SDK 与 MCP 三条未就绪夹具路径。SDK/MCP 分别约 117/166 ms 取消，核对 `starting-server` 阶段、处理器进程树和分析 Python 退出，无成功指标/报告；MCP 取消响应被抑制且后续 `tools/list` 正常。客户端测试注入的可执行程序只用于模拟服务器永不就绪，不是实际 Perfetto 数据分析；正常处理器分析由前述独立回归覆盖。`perfetto-initialization-1790740020174` 下载期 SDK/MCP 回归通过，三系统 CI 的启动验收入口自动包含新客户端，托管结果待确认。
 
 取消收尾竞态修正：收尾现在在处理器关闭后同步读取取消文件和期限，避免轮询线程尚未读取请求就把 `requested` 记录为 false。确定性回归在旧实现有两个失败用例，修正后四项通过，包含关闭期间取消和正常收尾。真实 trace/Trace Processor 的收尾注入 `perfetto-finalization-cancel-1790737634110` 先确认指标和报告已生成，再写入取消文件；最终 cancelled、两份成功产物移除、处理器退出且清理无错误。该注入验证收尾边界，不代表真实用户信号时序。Windows SDK/MCP 真实加载期取消复验 `perfetto-cancellation-1790737653266` 通过，构建及源码策略检查通过。
 
