@@ -33,6 +33,10 @@ Bridge 强制终止：Windows `gradle-cancellation-1790750594684` 在 Worker 285
 
 ## 下一实现单元与验收门槛
 
+Java bridge 已从单任务测试夹具移入 Android 包运行时 `packages/android/runtime/GradleBuildBridge.java`。调用协议为安装目录、项目、专属用户目录、回执路径、任务数量、任务数组、Gradle 参数数组；任务与参数通过 Tooling API 传递，不拼接 shell。回执增加版本、bridge PID、任务数和耗时，并以排他文件创建和文件同步保存。已有回执在执行前拒绝；异常退出留下的部分回执仍应视为未知，不能据此重放构建。它是供执行器使用的内部运行时，尚无公共构建 API、自动恢复或任意派生进程清理承诺。
+
+Windows 使用实际 dist/runtime 文件的验证：`gradle-cancellation-1790752162810` 执行两个任务，中文/空格/特殊字符参数原样往返，成功产物与回执匹配，再次使用回执被拒绝且内容不变；`1790752170829` 验证任务失败。`1790752186363` 父 Node 强杀、`1790752194995` bridge 强杀、`1790752226256` JavaExec EOF 均通过原有取消/清理/占用断言。运行记录绑定 Java 源码 SHA-256，原重复测试实现已移除。包验收检查 tarball 包含 Java 源码，并校验实际安装文件字节与源文件一致；这仍不是 npm/PyPI 正式发布。
+
 占用模块首轮 CI `36681342452` 在 macOS/Windows 的测试断言失败：实际 owner 路径正确规范化成 `/private/var/...` 和 `runneradmin`，测试却分别期待 `/var/...` 和 `RUNNER~1`。本地显式 junction 复现相同错误；修正为比较 realpath 后六项测试通过，并让六个竞争进程交替使用真实路径与别名，仍要求唯一持有者。产品路径规范化未放宽；修正的托管结果待新快照验证。
 
 托管原型结果：公开快照 `e42b38f` 的 CI `36680846741` 已核验 Linux/macOS 两份归档，共 362 个文件通过大小/SHA-256 校验。每个平台均通过等待任务、JavaExec、Worker EOF 取消，以及 bridge 强杀和父 Node 强杀五种场景。父 Node 强杀后分别在 554/1866 ms 得到 BuildCancelledException 回执，专属 stop 后 daemon/Worker 均退出。此快照早于项目占用模块；Windows 完整任务及 Android 仍按各自状态单独验收，不将两个主机平台成功写成整轮通过。

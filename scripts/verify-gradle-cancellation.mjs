@@ -7,6 +7,7 @@ import { fileURLToPath } from 'node:url';
 import { promisify } from 'node:util';
 import { resolveGradleInstallation } from './gradle-installation.mjs';
 import { runLoggedCommand } from './logged-command.mjs';
+import { createHash } from 'node:crypto';
 import { acquireBuildProject } from '../packages/android/dist/build-ownership.js';
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
@@ -76,12 +77,19 @@ tasks.register('controlledCompletion') {
         file('task-result.txt').text = 'APPVANTA_EXPECTED_TASK_SUCCESS'
     }
 }
+tasks.register('verifyArguments') {
+    doLast { file('argument.txt').text = providers.gradleProperty('bridgeValue').get() }
+}
 `);
 const classpath = join(installation.home, 'lib', '*');
-await promisify(execFile)(javac, ['-classpath', classpath, '-d', classes, join(root, 'scripts/fixtures/GradleCancellationProbe.java'), join(root, 'scripts/fixtures/GradleExecChild.java')], { windowsHide: true, timeout: 30000 });
+const bridgeSource = join(root, 'packages/android/dist/runtime/GradleBuildBridge.java');
+const bridgeSourceSha256 = createHash('sha256').update(await readFile(bridgeSource)).digest('hex');
+await promisify(execFile)(javac, ['-classpath', classpath, '-d', classes, bridgeSource, join(root, 'scripts/fixtures/GradleExecChild.java')], { windowsHide: true, timeout: 30000 });
 const receipt = join(evidence, 'bridge.json');
 const taskName = { wait: 'waitForCancellation', javaexec: 'childProcess', worker: 'isolatedWorker', success: 'controlledCompletion', failure: 'controlledCompletion' }[mode];
-const bridgeArgs = ['-classpath', classes + delimiter + classpath, 'GradleCancellationProbe', installation.home, project, userHome, receipt, taskName];
+const tasks = mode === 'success' ? [taskName, 'verifyArguments'] : [taskName];
+const propertyValue = 'space 中文 ; & = literal';
+const bridgeArgs = ['-classpath', classes + delimiter + classpath, 'GradleBuildBridge', installation.home, project, userHome, receipt, String(tasks.length), ...tasks, '--offline', '--console=plain', '--max-workers=1', `-PbridgeValue=${propertyValue}`];
 const ownershipPath = join(evidence, 'owner.json');
 const projectOwnership = await acquireBuildProject(project);
 await assert.rejects(acquireBuildProject(project), { code: 'BUILD_PROJECT_BUSY' });
@@ -93,7 +101,7 @@ child.stdout.on('data', chunk => { stdout += chunk; });
 child.stderr.on('data', chunk => { stderr += chunk; });
 child.on('error', error => { spawnError = error; });
 const exited = () => child.exitCode !== null || child.signalCode !== null;
-const report = { status: 'running', mode, trigger, evidence, project, userHome, installation, projectOwner: projectOwnership.owner, ...(trigger === 'owner-kill' ? { ownerPid: child.pid } : { bridgePid: child.pid }) };
+const report = { status: 'running', mode, trigger, evidence, project, userHome, installation, bridgeSourceSha256, projectOwner: projectOwnership.owner, ...(trigger === 'owner-kill' ? { ownerPid: child.pid } : { bridgePid: child.pid }) };
 const wait = async (test, ms, description) => {
   const deadline = Date.now() + ms;
   do {
@@ -148,7 +156,11 @@ try {
     assert.equal(report.bridge.status, mode === 'success' ? 'passed' : 'failed');
     assert.equal(report.bridge.cancellationRequested, false);
     assert.equal(report.bridge.failureClass, mode === 'success' ? '' : 'org.gradle.tooling.BuildException');
-    if (mode === 'success') assert.equal(await readFile(join(project, 'task-result.txt'), 'utf8'), 'APPVANTA_EXPECTED_TASK_SUCCESS');
+    if (mode === 'success') {
+      assert.equal(await readFile(join(project, 'task-result.txt'), 'utf8'), 'APPVANTA_EXPECTED_TASK_SUCCESS');
+      assert.equal(await readFile(join(project, 'argument.txt'), 'utf8'), propertyValue);
+      report.argumentRoundTrip = true;
+    }
     else assert.match(stderr, /APPVANTA_EXPECTED_TASK_FAILURE/);
     report.daemonAliveAfterCompletion = alive(report.task.pid);
   } else if (trigger !== 'bridge-kill') {
@@ -188,6 +200,11 @@ try {
     await delay(500);
     report.afterBridgeKill = { elapsedMs: Date.now() - start, daemonAlive: alive(report.task.pid), ...(report.worker ? { workerAlive: alive(report.worker.pid) } : {}) };
   }
+  if (report.bridge) {
+    assert.equal(report.bridge.version, 1);
+    assert.equal(report.bridge.bridgePid, report.bridgePid);
+    assert.equal(report.bridge.taskCount, tasks.length);
+  }
   await writeFile(join(evidence, 'before-stop.json'), JSON.stringify(report, null, 2), { flag: 'wx' });
   const stopped = await runLoggedCommand({ file: java, args: ['-classpath', installation.launcher, 'org.gradle.launcher.GradleMain', '--stop', '--gradle-user-home', userHome], cwd: project, logPath: join(evidence, 'stop.log'), timeoutMs: 30000 });
   report.stop = stopped;
@@ -195,6 +212,16 @@ try {
   assert.equal(stopped.exitCode, 0);
   await wait(() => !alive(report.task.pid), 10000, 'isolated Gradle daemon exit');
   report.daemonExited = true;
+  if (mode === 'success') {
+    const original = await readFile(receipt, 'utf8');
+    const repeated = await runLoggedCommand({ file: java, args: bridgeArgs, cwd: root, logPath: join(evidence, 'repeat-receipt.log'), timeoutMs: 30000 });
+    assert.equal(repeated.status, 'exited');
+    assert.notEqual(repeated.exitCode, 0);
+    assert.match(await readFile(join(evidence, 'repeat-receipt.log'), 'utf8'), /Receipt already exists/);
+    assert.equal(await readFile(receipt, 'utf8'), original);
+    assert.equal(alive(report.task.pid), false);
+    report.repeatedReceiptRejected = true;
+  }
   if (report.worker) {
     await wait(() => !alive(report.worker.pid), 10000, `${mode} child exit after daemon stop`);
     report.workerExitedAfterStop = true;
