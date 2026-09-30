@@ -6,12 +6,15 @@ import { randomUUID } from 'node:crypto';
 import * as fs from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { basename, join } from 'node:path';
+import { fileURLToPath } from 'node:url';
+import { createInterface } from 'node:readline';
+import { setTimeout as delay } from 'node:timers/promises';
 
 const persistent = process.argv[2] === 'persistent';
 let target, reader, exited, failures = 0;
 const events = [];
-const recordEvent = phase => {
-  const event = { phase, at: Date.now() };
+const recordEvent = (phase, details = {}) => {
+  const event = { phase, at: Date.now(), ...details };
   events.push(event);
   console.log(JSON.stringify(event));
 };
@@ -41,17 +44,25 @@ try {
   const record = await store.create('offline-device', 500, 1000);
   target = await fs.realpath(join(record.rootDirectory, 'monitor.json'));
   const before = await fs.readFile(target);
-  const script = `
-$stream = [System.IO.File]::Open($env:APPVANTA_RECORD, 'Open', 'Read', 'ReadWrite')
-try { [Console]::WriteLine('locked'); [Console]::Out.Flush(); [Console]::ReadLine() | Out-Null }
-finally { $stream.Dispose(); [Console]::WriteLine('released') }
-`;
-  reader = spawn('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', script], { env: { ...process.env, APPVANTA_RECORD: target }, windowsHide: true, stdio: ['pipe', 'pipe', 'pipe'] });
+  reader = spawn(process.env.APPVANTA_TEST_PYTHON ?? 'python', ['-u', fileURLToPath(new URL('./windows-share-holder.py', import.meta.url))], { env: { ...process.env, APPVANTA_RECORD: target }, windowsHide: true, stdio: ['pipe', 'pipe', 'pipe'] });
   recordEvent('holder-spawned');
   exited = once(reader, 'exit');
   let stderr = ''; reader.stderr.on('data', chunk => { stderr += chunk; });
-  const [output] = await Promise.race([once(reader.stdout, 'data', { signal: AbortSignal.timeout(10000) }), exited.then(() => { throw new Error(`Reader exited before locking: ${stderr}`); })]);
-  assert.match(output.toString(), /locked/);
+  const lines = createInterface({ input: reader.stdout });
+  const ready = new Promise((resolveReady, rejectReady) => {
+    lines.on('line', line => {
+      try {
+        const event = JSON.parse(line);
+        assert.equal(event.pid, reader.pid);
+        recordEvent(`holder-${event.phase}`, { holderAt: event.at, holderPid: event.pid });
+        if (event.phase === 'lock-acquired') resolveReady();
+      } catch (error) { rejectReady(error); }
+    });
+  });
+  let readyTimer;
+  await Promise.race([ready, exited.then(() => { throw new Error(`Reader exited before locking: ${stderr}`); }),
+    new Promise((_, reject) => { readyTimer = setTimeout(() => reject(new Error(`Holder ready handshake exceeded 10 seconds: ${stderr}`)), 10000); }),
+  ]).finally(() => clearTimeout(readyTimer));
   recordEvent('holder-locked');
   const session = randomUUID();
   if (persistent) {
@@ -69,7 +80,15 @@ finally { $stream.Dispose(); [Console]::WriteLine('released') }
   console.log(JSON.stringify({ mode: persistent ? 'persistent' : 'transient', nativeFailures: failures, events }));
 } finally {
   recordEvent('cleanup-started');
-  if (reader && reader.exitCode === null && reader.signalCode === null) { reader.stdin.end('release\n'); await exited; }
+  if (reader && reader.exitCode === null && reader.signalCode === null) {
+    reader.stdin.end('release\n');
+    await Promise.race([exited, delay(2000, undefined, { ref: false })]);
+    if (reader.exitCode === null && reader.signalCode === null) {
+      recordEvent('holder-termination-requested'); reader.kill();
+      await Promise.race([exited, delay(2000, undefined, { ref: false })]);
+      assert(reader.exitCode !== null || reader.signalCode !== null, 'Holder did not terminate after fixture cleanup');
+    }
+  }
   recordEvent('holder-cleaned');
   await fs.rm(root, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
 }

@@ -6,6 +6,11 @@ AppVanta accepts independently written contributions that improve mobile applica
 
 Use Node.js 22 and install the locked dependencies:
 
+On Windows, `npm test` also requires Python 3.11+ for the native file-sharing
+fixture. Set `APPVANTA_TEST_PYTHON` if its executable is not named `python`.
+This helper uses the standard library only and performs a real Win32 sharing
+denial; it does not replace the production rename with a synthetic error.
+
 ```sh
 npm ci
 npm run build
