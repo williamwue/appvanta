@@ -54,7 +54,11 @@ public final class ShareActivity extends Activity {
         if (type == null || type.length() > 127 || !type.matches("[A-Za-z0-9][A-Za-z0-9!#$&^_.+-]*/[A-Za-z0-9][A-Za-z0-9!#$&^_.+-]*")) throw new IllegalArgumentException("Explicit MIME required");
         if (target != null && (!target.matches("[A-Za-z][A-Za-z0-9_]*(\\.[A-Za-z][A-Za-z0-9_]*)+") || target.equals(getPackageName()))) throw new IllegalArgumentException("Invalid destination");
         if (uri == null || uri.toString().length() > 4096 || !uri.toString().matches("content://[A-Za-z0-9_.-]+/[^#\\s\\x00-\\x1f\\x7f]*")) throw new IllegalArgumentException("Content URI required");
-        if (checkUriPermission(uri, android.os.Process.myPid(), android.os.Process.myUid(), Intent.FLAG_GRANT_READ_URI_PERMISSION) != PackageManager.PERMISSION_GRANTED) throw new SecurityException("Read grant required");
+        if ("dev.appvanta.share.uploads".equals(uri.getAuthority())) {
+            try (android.os.ParcelFileDescriptor descriptor = getContentResolver().openFileDescriptor(uri, "r")) {
+                if (descriptor == null) throw new IllegalStateException("Managed upload is not readable");
+            }
+        } else if (checkUriPermission(uri, android.os.Process.myPid(), android.os.Process.myUid(), Intent.FLAG_GRANT_READ_URI_PERMISSION) != PackageManager.PERMISSION_GRANTED) throw new SecurityException("Read grant required");
         if (operation == null) {
             if (index != 0) throw new IllegalStateException("Preparation must start at zero");
             JSONObject initial = new JSONObject().put("version", 1).put("operation", requested).put("state", "prepared").put("count", expected).put("mimeType", type).put("uris", new JSONArray());

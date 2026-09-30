@@ -197,6 +197,9 @@ jobs:
       - name: Verify maximum attachment delivery
         timeout-minutes: 5
         run: node scripts/verify-share-limit.mjs emulator-5554
+      - name: Verify managed attachment upload provider
+        timeout-minutes: 4
+        run: node scripts/verify-upload-provider.mjs emulator-5554
       - name: Verify application accelerometer callbacks
         timeout-minutes: 4
         run: |

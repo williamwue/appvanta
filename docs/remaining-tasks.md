@@ -82,7 +82,7 @@ API 37 / Android 17 已验证裁决后步骤边界再次崩溃、只读等待执
 
 - [ ] OCR 与外部 Agent 视觉判断接入，图像模板跨 DPI/主题验证。
 - [ ] 探索式执行及快速/计划两种 Agent 工作流的端到端验收；Planner/Checker 继续由客户端 Agent 承担，不内置强制模型 API。
-- [ ] 附件分享、系统选择器、更多跨应用组合和多语言界面。已有 content URI 的只读单附件及 `share-files` 多附件已接入 Action/Flow/MCP；多附件产品 helper、持久回执、准备中断和重复请求拒绝已有 API 37 验证，真实 CLI/MCP 双附件字节与权限验收通过。单附件系统选择器接收和取消已有 API 35/37 验收。多附件 API 37 英文选择器已补取消无交付与实际接收，修复 helper 提前结束导致转授权失败，证据 `share-helper-1790729412544`。本地文件托管、多附件完整选择器、多语言和更多 provider/应用仍待完成，见 file-sharing.md、multi-attachment-design.md。
+- [ ] 附件分享、系统选择器、更多跨应用组合和多语言界面。已有 content URI 的只读单附件及 `share-files` 多附件已接入 Action/Flow/MCP；多附件产品 helper、持久回执、准备中断和重复请求拒绝已有 API 37 验证，真实 CLI/MCP 双附件字节与权限验收通过。单附件系统选择器接收和取消已有 API 35/37 验收。多附件 API 37 英文选择器已补取消无交付与实际接收，修复 helper 提前结束导致转授权失败，证据 `share-helper-1790729412544`。托管上传原生 provider 已通过完整文件/空文件、摘要与大小校验、不可覆盖、实际分享和删除撤权，见 managed-uploads.md；正式客户端上传、宿主中断恢复、多附件完整选择器、多语言和更多 provider/应用仍待完成，见 file-sharing.md、multi-attachment-design.md。
 - [ ] shake、更完整的设备状态控制及原状态恢复。模拟器摇动已接入 CLI/MCP Flow、MCP 独立动作及 SDK 单动作入口；三轴控制台恢复、MCP 取消、独立应用 SensorEvent 回调、宿主强杀，以及模拟器实际退出重启后的标准恢复已有 API 37 证据。任意应用响应、更多断连/重启冲突组合、多设备及真机仍待验收，见 emulator-sensors.md。
 - [ ] 更多 Android 构建配置、项目结构及构建失败诊断。
 - [ ] AVD 创建、依赖安装、设备授权引导及启动取消的产品化。

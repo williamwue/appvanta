@@ -15,7 +15,9 @@ Flow、CLI `run-flow`、MCP `run_flow`/`execute_action` 和 Android Driver 支�
 
 URI 必须是带 authority/path 的 `content://`，最多 4096 字符，不接受 file/http、用户信息、端口、fragment、空白和控制字符。MIME 必须是明确的 type/subtype，不接受通配符。`packageName` 可省略，此时由 Android 解析接收者；显式目标包及 API 37 英文系统选择器已有验收。发送失败会使 Flow 停止，不执行下一步。启动成功只表示 Intent 已投递，仍须由接收应用检查点和实际内容证明业务成功。
 
-动作不上传本地文件、不创建文件 provider，也不删除 URI 所指文件。授权生命周期由 Android 与 URI 所属应用管理；若需要提前撤销，由来源应用执行。尚未实现 AppVanta 托管上传/回收、系统选择器完整验收、跨用户或真机/OEM 验收。
+动作不上传本地文件、不创建文件 provider，也不删除 URI 所指文件。授权生命周期由 Android 与 URI 所属应用管理；若需要提前撤销，由来源应用执行。系统选择器完整验收、跨用户及真机/OEM 验收仍待完成。
+
+后续托管上传进展：helper 已增加独立上传 provider，完整性验证后可提供只读 URI，并支持显式撤权和删除；API 37 原生链路已验证。正式 CLI/MCP 上传入口及宿主中断恢复仍待接入，分享 Action 本身仍只接收已有 URI。协议与限制见 [托管上传](managed-uploads.md)。
 
 ## 多附件
 
