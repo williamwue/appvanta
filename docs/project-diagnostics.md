@@ -22,3 +22,7 @@ MCP 工具 `inspect_android_project` 接受 `projectDirectory` 和可选 `buildL
 初次离线运行 `gradle-project-1790748472075` 因本机缺少 library 插件标记而失败，保留原始日志；它促成独立的 plugin-resolution 分类，修复前新增测试失败、修复后通过。后续在线取得依赖的运行 `1790748510090` 通过，最终 `1790748641660` 使用已缓存依赖完成离线复验。三系统 CI 新增相同构建验证，托管结果待确认。
 
 复验命令：设置 `JAVA_HOME`、`ANDROID_HOME`（含 platforms;android-35 和 build-tools;35.0.0），运行 `node scripts/verify-gradle-project.mjs <Gradle-8.13-home>`；也可通过 GRADLE_HOME 或 PATH 找到同版本。依赖已缓存时可以设置 `APPVANTA_GRADLE_OFFLINE=1`。版本组合参考 [AGP 8.13 官方兼容性表](https://developer.android.com/build/releases/agp-8-13-0-release-notes)。仍需实现产品化构建执行、有效配置/变体查询，以及更多真实工程与故障验收；此脚本只构建自身生成的验证工程。
+
+托管首轮 `36677128333`：macOS/JDK 17 的 `gradle-project-1790748876428` 已通过实际构建、APK 内容检查和三个失败场景，macOS 归档 105 个文件校验通过。Windows/Linux 在 Gradle 类加载阶段失败，两边各 6 个归档文件校验通过，原始日志均为 GradleMain ClassNotFoundException；尚未执行 Android 构建。它们不构成三系统全绿。
+
+Windows `gradle-project-1790749080206` 通过设置无有效启动 JAR 的 GRADLE_HOME、同时在 PATH 提供 8.13，复现相同异常。验证脚本现检查所选安装的固定版本启动 JAR，无效的自动环境候选继续查 PATH，显式错误参数则拒绝；记录选择来源、路径和 JAR 摘要，并先实际检查 Gradle 版本。相同环境下 `gradle-project-1790749081553` 完整通过，45 项脚本测试通过。首轮托管没有记录原 GRADLE_HOME，故这仍是已复现的选择缺陷和待托管验证的修正，不能反推其环境路径；新回执补记该值。

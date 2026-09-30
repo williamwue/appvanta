@@ -1,18 +1,17 @@
 import assert from 'node:assert/strict';
 import { execFile } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { existsSync } from 'node:fs';
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
-import { delimiter, dirname, join, resolve } from 'node:path';
+import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { promisify } from 'node:util';
 import { inspectAndroidProject } from '../packages/android/dist/index.js';
 import { mcpExchange } from './test/helpers/mcp-exchange.mjs';
+import { resolveGradleInstallation } from './gradle-installation.mjs';
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
-const gradleHome = process.argv[2] ?? process.env.GRADLE_HOME ?? (process.env.PATH ?? '').split(delimiter)
-  .map(path => resolve(path, '..')).find(path => existsSync(join(path, 'lib/gradle-gradle-cli-main-8.13.jar')));
-if (!gradleHome || !process.env.JAVA_HOME) throw new Error('Provide Gradle 8.13 home as argument/GRADLE_HOME and set JAVA_HOME');
+const installation = resolveGradleInstallation(process.argv[2]);
+if (!process.env.JAVA_HOME) throw new Error('Set JAVA_HOME');
 const sdk = process.env.ANDROID_HOME ?? process.env.ANDROID_SDK_ROOT;
 if (!sdk) throw new Error('Set ANDROID_HOME or ANDROID_SDK_ROOT');
 const id = `gradle-project-${Date.now()}`;
@@ -20,7 +19,7 @@ const project = join(root, '.appvanta/gradle-projects', id);
 const evidence = join(root, '.appvanta/runs', id);
 await mkdir(evidence, { recursive: true });
 const java = join(process.env.JAVA_HOME, 'bin', process.platform === 'win32' ? 'java.exe' : 'java');
-const launcher = join(resolve(gradleHome), 'lib/gradle-gradle-cli-main-8.13.jar');
+const launcher = installation.launcher;
 const runFile = promisify(execFile);
 const source = {
   'settings.gradle.kts': `pluginManagement { repositories { google(); mavenCentral(); gradlePluginPortal() } }
@@ -57,7 +56,7 @@ for (const [path, content] of Object.entries(source)) {
   await writeFile(join(project, path), content, { flag: 'wx' });
 }
 await writeFile(join(evidence, 'sources.json'), JSON.stringify(source, null, 2));
-const report = { status: 'running', project, evidence, gradleVersion: '8.13', agpVersion: '8.13.2', cases: [] };
+const report = { status: 'running', project, evidence, gradleVersion: '8.13', agpVersion: '8.13.2', installation: { ...installation, environmentHome: process.env.GRADLE_HOME ?? null, launcherSha256: createHash('sha256').update(await readFile(launcher)).digest('hex') }, cases: [] };
 const persist = () => writeFile(join(evidence, 'verification.json'), JSON.stringify(report, null, 2));
 async function gradle(name, tasks, environment = process.env) {
   const args = ['-classpath', launcher, 'org.gradle.launcher.GradleMain', '--no-daemon', '--console=plain', '--max-workers=2', ...(process.env.APPVANTA_GRADLE_OFFLINE === '1' ? ['--offline'] : []), ...tasks];
@@ -80,6 +79,9 @@ async function gradle(name, tasks, environment = process.env) {
 try {
   const version = await runFile(java, ['-version'], { windowsHide: true, encoding: 'utf8' });
   report.javaVersion = `${version.stdout}${version.stderr}`.trim();
+  const actualVersion = await runFile(java, ['-classpath', launcher, 'org.gradle.launcher.GradleMain', '--version'], { cwd: project, windowsHide: true, encoding: 'utf8', timeout: 30000 });
+  await writeFile(join(evidence, 'gradle-version.txt'), actualVersion.stdout);
+  assert.match(actualVersion.stdout, /^Gradle 8\.13\s*$/m);
   const wrapper = await gradle('wrapper', ['wrapper', '--gradle-version=8.13', '--distribution-type=bin', '--no-validate-url']);
   assert.equal(wrapper.exitCode, 0, `Wrapper failed; inspect ${evidence}`);
   assert.equal(wrapper.diagnosis.wrapper.filesPresent, true);
