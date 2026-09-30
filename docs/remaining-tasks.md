@@ -130,6 +130,8 @@ Python 生命周期补充：`python-sdk-1790745603159295600` 复现 Windows 默�
 
 ## P3：CI 与开源发布
 
+Python 请求级取消补充：Windows `python-cancellation-1790746111811649700` 先分析已核验 API 35 trace，再在真实处理器加载重复输入期间取消 asyncio 调用；141 ms 后确认分析器/处理器退出、cancelled 回执、无成功指标/报告，`ownerDisconnected=false`，同一会话继续列出工具。三系统 retained-trace 分析已接入该脚本，结果待新 CI；不代表全部工具或请求超时/异常断连组合。宿主修正快照 `36672792893` 的 Windows 构建在既有 monitor transient 文件共享占用夹具等待 holder 握手 10 秒时失败，未进入 Python/Perfetto 专项验收；保留原期限，根因待进一步检查。
+
 - [x] 发布实验性源码快照并完成公开项目主页及安全发布准备；公开 `main` 初始提交 [`93749a0`](https://github.com/williamwue/appvanta/commit/93749a0cb87937149376aaac16adf8d199660acb) 的树与本地集成修订 `fda6c8b` 一致，[私密漏洞报告入口](https://github.com/williamwue/appvanta/security/advisories/new)已启用；这不等于完整产品验收或 npm 发布。
 - [x] Windows/Linux/macOS 托管构建、测试、干净安装与子进程行为验收。
 - [x] 托管 Android Emulator 验收及失败证据上传；CI/Jenkins 文档与实际执行对齐。

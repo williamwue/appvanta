@@ -51,3 +51,10 @@ This initial SDK is not a stable API promise. Cross-platform installation,
 real-device/OEM behavior, cancellation and disconnect combinations require their
 own acceptance evidence. It reuses the official [MCP Python client](https://py.sdk.modelcontextprotocol.io/client/)
 with `mcp==2.2.0`, using the legacy handshake supported by this AppVanta server.
+
+Request-cancellation verifier: `scripts/verify-python-cancellation.py --trace
+<retained-performance-probe-trace> --python <perfetto-python>` first analyzes the
+original trace, then cancels an asyncio call while a real processor loads a
+repeated-input fixture. It requires a cancelled receipt, both process exits,
+absent success artifacts, and a usable MCP session afterward. This is distinct
+from cancelling a persisted task or terminating its owner process.
