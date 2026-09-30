@@ -11,8 +11,14 @@ MCP 工具 `inspect_android_project` 接受 `projectDirectory` 和可选 `buildL
 
 报告包括 Groovy/Kotlin 的 settings/build 文件、默认版本目录、Gradle/本地属性文件、wrapper 文件及 AndroidManifest 的相对路径、大小和 SHA-256。文件内容不写入结果；wrapper 的 `filesPresent` 只代表四个标准文件可读取，不验证脚本、JAR、下载地址或校验和可信度。`android-gradle-candidate` 仅表示扫描范围同时存在 Gradle 声明和 Android manifest，不推断动态 include、模块映射、插件别名、实际变体或 SDK 版本。根目录的 wrapper 缺失与同位置两种 DSL 文件均提供明确的复核建议。
 
-日志可识别 SDK 位置/许可、Java 位置/版本、依赖解析、manifest 合并、资源链接、重复类与签名错误。每类记录首次匹配行号及固定建议，不复制日志内容；原日志摘要用于核对输入。`outcomeMarker` 是日志最后一个完整行开头的 `BUILD SUCCESSFUL` 或 `BUILD FAILED` 标记，没有标记为 unknown；它不证明当前代码已构建、日志完整或多次构建都成功。无法匹配的错误仍需读取原日志分析。
+日志可识别 SDK 位置/许可、Java 位置/版本、插件解析、依赖解析、manifest 合并、资源链接、重复类与签名错误。每类记录首次匹配行号及固定建议，不复制日志内容；原日志摘要用于核对输入。`outcomeMarker` 是日志最后一个完整行开头的 `BUILD SUCCESSFUL` 或 `BUILD FAILED` 标记，没有标记为 unknown；它不证明当前代码已构建、日志完整或多次构建都成功。无法匹配的错误仍需读取原日志分析。
 
 扫描最多访问 5000 个目录条目，最多进入 8 层子目录，单个已识别文件限 1 MiB，内容读取总量限 16 MiB；日志上限 2 MiB，超限明确报错。`.git`、`.gradle`、`.idea`、`.appvanta`、`node_modules`、`build`、`dist`、`.venv` 不扫描。符号链接/Windows junction 不遍历；无法读取、深度或数量截断记录在 `scan.skipped`，此时 `scan.complete=false`。complete 仅表示在上述排除规则下扫描完成。扫描不是文件系统快照，检查期间应避免修改项目。
 
-实现依据：[Android 构建配置](https://developer.android.com/build)、[Gradle Wrapper 标准文件](https://docs.gradle.org/current/userguide/gradle_wrapper.html)。当前验证使用受控文件与日志夹具，包含真实 CLI/MCP 往返、Groovy/Kotlin、文件内容保留、边界和取消；仍需补真实多模块工程、构建执行、动态配置及更多实际失败日志验收。
+实现依据：[Android 构建配置](https://developer.android.com/build)、[Gradle Wrapper 标准文件](https://docs.gradle.org/current/userguide/gradle_wrapper.html)。受控文件与日志夹具覆盖真实 CLI/MCP 往返、Groovy/Kotlin、文件内容保留、边界和取消。
+
+2026-09-30 Windows 的 `gradle-project-1790748641660` 使用 Gradle 8.13、AGP 8.13.2、JDK 21.0.12.1、SDK/build-tools 35，实际构建 Kotlin DSL 应用与 Groovy DSL 库，生成 wrapper 和 debug APK，并用 aapt 检查包名/入口、jar 检查 DEX 和 manifest 条目。三个实际失败场景分别移除 SDK 环境变量、引入不存在的资源引用和请求离线缓存中不存在的依赖；退出码均非零，错误分类及失败标记通过，SDK/CLI/MCP 对实际日志的报告一致。日志、源码输入、APK 摘要与检查结果保存在该运行证据目录；APK 本体在 `.appvanta/gradle-projects` 的隔离构建目录。该验收没有安装或启动 APK。
+
+初次离线运行 `gradle-project-1790748472075` 因本机缺少 library 插件标记而失败，保留原始日志；它促成独立的 plugin-resolution 分类，修复前新增测试失败、修复后通过。后续在线取得依赖的运行 `1790748510090` 通过，最终 `1790748641660` 使用已缓存依赖完成离线复验。三系统 CI 新增相同构建验证，托管结果待确认。
+
+复验命令：设置 `JAVA_HOME`、`ANDROID_HOME`（含 platforms;android-35 和 build-tools;35.0.0），运行 `node scripts/verify-gradle-project.mjs <Gradle-8.13-home>`；也可通过 GRADLE_HOME 或 PATH 找到同版本。依赖已缓存时可以设置 `APPVANTA_GRADLE_OFFLINE=1`。版本组合参考 [AGP 8.13 官方兼容性表](https://developer.android.com/build/releases/agp-8-13-0-release-notes)。仍需实现产品化构建执行、有效配置/变体查询，以及更多真实工程与故障验收；此脚本只构建自身生成的验证工程。

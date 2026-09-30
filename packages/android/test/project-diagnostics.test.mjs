@@ -79,3 +79,9 @@ test('missing projects and pre-cancelled scans fail; an empty directory stays un
   await assert.rejects(inspectAndroidProject({ projectDirectory: join(root, 'missing') }), /ENOENT/);
   await assert.rejects(inspectAndroidProject({ projectDirectory: root, signal: AbortSignal.abort(new Error('cancelled')) }), /cancelled/);
 });
+
+test('actual Gradle plugin resolution failure is classified separately from module dependencies', async t => {
+  const root = await fixture(t, { 'build.gradle.kts': '', 'build.log': "Plugin [id: 'com.android.library', version: '8.13.2', apply: false] was not found in any of the following sources:\nBUILD FAILED in 8s\n" });
+  const report = await inspectAndroidProject({ projectDirectory: root, buildLogPath: join(root, 'build.log') });
+  assert.deepEqual(report.log.findings.map(item => [item.code, item.line]), [['plugin-resolution', 1]]);
+});

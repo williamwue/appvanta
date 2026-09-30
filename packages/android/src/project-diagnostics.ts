@@ -32,6 +32,7 @@ const kinds = new Map([
 const excluded = ['.git', '.gradle', '.idea', '.appvanta', 'node_modules', 'build', 'dist', '.venv'];
 const wrapperFiles = ['gradlew', 'gradlew.bat', 'gradle/wrapper/gradle-wrapper.jar', 'gradle/wrapper/gradle-wrapper.properties'];
 const rules: readonly { code: string; pattern: RegExp; remediation: string }[] = [
+  { code: 'plugin-resolution', pattern: /Plugin \[.+\] was not found in any of the following sources/i, remediation: 'Check the plugin ID and version, pluginManagement repositories and offline cache availability.' },
   { code: 'sdk-location', pattern: /SDK location not found/i, remediation: 'Configure the Android SDK location in local.properties or ANDROID_HOME, then verify that directory exists.' },
   { code: 'sdk-license', pattern: /(?:licenses? (?:have |has )?not been accepted|licenses? .*not accepted)/i, remediation: 'Review and accept the required Android SDK licenses using the SDK manager.' },
   { code: 'java-version', pattern: /(?:Android Gradle plugin requires Java|Unsupported class file major version|invalid source release|invalid target release)/i, remediation: 'Check the project Gradle, Android plugin and Java toolchain compatibility; select the required JDK.' },

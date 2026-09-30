@@ -39,6 +39,15 @@ jobs:
       - run: npm ci
       - run: npm run build
       - run: npm test
+      - name: Set up pinned Gradle for Android project verification
+        uses: gradle/actions/setup-gradle@0b6dd653ba04f4f93bf581ec31e66cbd7dcb644d # v4
+        with:
+          gradle-version: '8.13'
+      - name: Verify real Android Gradle project diagnostics
+        timeout-minutes: 15
+        run: |
+          sdkmanager "platforms;android-35" "build-tools;35.0.0"
+          node scripts/verify-gradle-project.mjs
       - name: Verify installed Python SDK
         timeout-minutes: 5
         run: |
