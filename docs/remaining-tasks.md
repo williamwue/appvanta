@@ -124,6 +124,8 @@ P0-04 补充：API 37 `network-capture-recovery-1790737390334` 已验证录屏/P
 - [ ] 证据时间线/覆盖层、跨电脑离线导出、通用脱敏与历史引用迁移。
 - [ ] Codex、Claude Code、Cursor 产品内安装与真实调用验收，以及 MCP 断连边界。
 - [ ] 稳定对外 SDK 与 Python SDK。实验性 Python 包现通过官方 MCP 客户端复用全部工具，并提供观察、动作、Flow 和任务方法；本地安装、4 项错误/JSON/超时参数测试及 Windows/API 37 真实握手、60 工具发现、错误后继续调用、截图/UI 树读取通过（`python-sdk-1790745072246914200`）。三系统安装与 API 35 观察已接入 CI，结果待确认；稳定类型契约、完整执行/取消/断连及升级兼容性仍待验收，不据此关闭整项。见 ../python/README.md。
+
+Python 生命周期补充：`python-sdk-1790745603159295600` 复现 Windows 默认 MCP stdio Job Object 在连接关闭时连带终止独立 Worker，任务变为 interrupted。现场以原租约 `de9bc86f-652a-492a-82d0-ca928770ea33` 经 recover_flow 完成环境清理，未重放动作。Python 现向官方协议客户端提供只管理服务器进程的本地传输，保留持久独立 Worker；`python-sdk-1790745792788422900` 通过实际观察、同步只读 Flow、关闭连接后任务继续运行、新连接取消（343 ms）、终态再次读取与租约释放。6 项 Python 测试通过，包含 UTF-8 往返和正常/异常退出时关闭服务器 stdin；不证明外部进程树强杀、所有工具取消、所有终端/OEM 或跨版本兼容。托管 `36672391744` 的 Ubuntu 构建任务在脚本测试期间收到 runner shutdown 信号后失败，未进入 Python 安装验收，不将其归为 SDK 安装缺陷。
 - [ ] 覆盖全部执行入口的权限前后状态、执行者与结果审计。
 
 ## P3：CI 与开源发布

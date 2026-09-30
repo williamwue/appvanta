@@ -39,6 +39,14 @@ it is not proof of device rollback or completed cleanup. Inspect saved evidence
 and task/lease status before deciding whether to retry. Independent Flow workers
 may continue after the client closes; manage them using task IDs.
 
+The local stdio transport owns only its Node server process. It closes stdin,
+waits for graceful exit, and escalates termination of that process within bounded
+waits. It deliberately preserves detached workers recorded by AppVanta. The
+generic MCP Windows transport's kill-on-close Job Object would terminate those
+workers, so this package supplies its own transport to the official MCP client.
+This is not a guarantee that arbitrary descendants survive an external host
+process-tree kill or a containing operating-system Job Object.
+
 This initial SDK is not a stable API promise. Cross-platform installation,
 real-device/OEM behavior, cancellation and disconnect combinations require their
 own acceptance evidence. It reuses the official [MCP Python client](https://py.sdk.modelcontextprotocol.io/client/)

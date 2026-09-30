@@ -8,6 +8,7 @@ from typing import Any
 
 from mcp import Client, StdioServerParameters
 from mcp.types import CallToolResult, TextContent, Tool
+from .transport import appvanta_stdio
 
 
 class AppVantaToolError(RuntimeError):
@@ -58,7 +59,7 @@ class AppVanta:
         parameters = StdioServerParameters(command=node, args=[str(script)],
                                            cwd=Path(cwd).resolve(strict=True) if cwd is not None else None,
                                            env={**os.environ, **(env or {})})
-        async with Client(parameters, mode='legacy', cache=None) as client:
+        async with Client(appvanta_stdio(parameters), mode='legacy', cache=None) as client:
             if client.server_info is None or client.server_info.name != 'appvanta':
                 raise RuntimeError('The selected script did not identify as AppVanta')
             yield cls(client)
