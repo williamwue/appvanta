@@ -139,7 +139,7 @@ async function callUnlockedTool(name: string | undefined, args: Record<string, u
     case 'restart_adjudicated_task':
     case 'continue_adjudicated_task': return callAdjudicationTool(name, taskStore, args, signal);
     case 'list_avds': return listAndroidAvds();
-    case 'start_avd': return startAndroidAvd(String(args.name), typeof args.port === 'number' ? args.port : 5554, typeof args.timeoutMs === 'number' ? args.timeoutMs : 120000, args.gpu as string | undefined);
+    case 'start_avd': return startAndroidAvd(String(args.name), typeof args.port === 'number' ? args.port : 5554, typeof args.timeoutMs === 'number' ? args.timeoutMs : 120000, args.gpu as string | undefined, signal);
     case 'inspect_task_progress': return inspectTaskProgress(taskStore, String(args.taskId));
     case 'continue_task': return continueAndroidTask(taskStore, String(args.taskId), String(args.leaseToken), args.checkpoint, signal);
     case 'start_task_continuation': return startContinuation(taskStore, String(args.taskId), String(args.leaseToken), args.checkpoint, signal);

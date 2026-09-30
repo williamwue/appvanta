@@ -86,7 +86,7 @@ async function dispatch(): Promise<void> {
     case 'list-avds': printJson(await listAndroidAvds()); break;
     case 'start-avd': {
       if (!args[0] || args.length > 4) throw new Error('Usage: start-avd <name> [even-port] [timeout-ms] [gpu-mode]');
-      const result = await startAndroidAvd(args[0], args[1] === undefined ? 5554 : Number(args[1]), args[2] === undefined ? 120000 : Number(args[2]), args[3]);
+      const result = await startAndroidAvd(args[0], args[1] === undefined ? 5554 : Number(args[1]), args[2] === undefined ? 120000 : Number(args[2]), args[3], commandController.signal);
       printJson(result); if (result.status !== 'ready') process.exitCode = 1; break;
     }
     case 'continue-task': {

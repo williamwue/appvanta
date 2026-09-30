@@ -7,15 +7,21 @@ import { setTimeout as delay } from 'node:timers/promises';
 import { withDeviceLock } from '@appvanta/core';
 import { listAndroidAvds } from './emulators.js';
 
-export async function startAndroidAvd(name: string, port = 5554, timeoutMs = 120000, gpu?: string) {
+export async function startAndroidAvd(name: string, port = 5554, timeoutMs = 120000, gpu?: string, signal?: AbortSignal) {
+  signal?.throwIfAborted();
   if (!/^[A-Za-z0-9_.-]+$/.test(name)) throw new Error('Invalid AVD name');
   if (!Number.isInteger(port) || port < 5554 || port > 5682 || port % 2) throw new Error('AVD port must be even and between 5554 and 5682');
   if (!Number.isInteger(timeoutMs) || timeoutMs < 1000 || timeoutMs > 600000) throw new Error('Invalid AVD boot timeout');
   if (gpu !== undefined && !['auto', 'host', 'software', 'lavapipe', 'swiftshader', 'swangle'].includes(gpu)) throw new Error('Invalid emulator GPU mode');
-  const inventory = await listAndroidAvds();
+  const inventory = await listAndroidAvds(signal ? { signal } : {});
   if (!inventory.avds.some(avd => avd.name === name)) throw new Error(`AVD is not configured: ${name}`);
   const adb = process.env.ADB_PATH || 'adb';
-  const run = async (args: string[]) => (await promisify(execFile)(adb, args, { windowsHide: true, encoding: 'utf8', timeout: 5000 })).stdout.trim();
+  const run = async (args: string[]) => {
+    signal?.throwIfAborted();
+    const result = await promisify(execFile)(adb, args, { signal, windowsHide: true, encoding: 'utf8', timeout: 5000 });
+    signal?.throwIfAborted();
+    return result.stdout.trim();
+  };
   return withDeviceLock(`avd:${name}`, async () => {
     const devices = (await run(['devices'])).split(/\r?\n/).map(line => /^(emulator-\d+)\s+(\S+)/.exec(line)).filter(item => item !== null);
     let serial = `emulator-${port}`, reused = false;
@@ -38,29 +44,43 @@ export async function startAndroidAvd(name: string, port = 5554, timeoutMs = 120
         await writeFile(join(root, 'startup.json'), JSON.stringify(result, null, 2)); return result;
       };
       await save('starting');
-      if (!reused) {
-        const log = await open(join(root, 'emulator.log'), 'wx');
-        try {
-          child = spawn(inventory.executable, args, { detached: true, windowsHide: true, stdio: ['ignore', log.fd, log.fd] });
-          child.on('error', error => { spawnError = error; }); child.unref();
-        } finally { await log.close(); }
-        await save('booting');
-      }
-      const deadline = Date.now() + timeoutMs;
-      let lastError = '';
-      while (Date.now() < deadline) {
-        if (spawnError || child && (child.exitCode !== null || child.signalCode !== null)) {
-          const result = await save('failed', String(spawnError ?? `Emulator exited: ${child?.exitCode}`));
-          throw new Error(`AVD startup failed; inspect ${result.directory}`);
+      try {
+        signal?.throwIfAborted();
+        if (!reused) {
+          const log = await open(join(root, 'emulator.log'), 'wx');
+          try {
+            signal?.throwIfAborted();
+            child = spawn(inventory.executable, args, { detached: true, windowsHide: true, stdio: ['ignore', log.fd, log.fd] });
+            child.on('error', error => { spawnError = error; }); child.unref();
+          } finally { await log.close(); }
+          await save('booting');
         }
-        try {
-          const actualName = (await run(['-s', serial, 'emu', 'avd', 'name'])).split(/\r?\n/).map(value => value.trim()).filter(Boolean)[0];
-          if (actualName !== name) throw new Error(`AVD identity mismatch at ${serial}`);
-          if (await run(['-s', serial, 'shell', 'getprop', 'sys.boot_completed']) === '1') return save('ready');
-        } catch (error) { lastError = String(error); }
-        await delay(Math.min(500, Math.max(0, deadline - Date.now())));
+        const deadline = Date.now() + timeoutMs;
+        let lastError = '';
+        while (Date.now() < deadline) {
+          signal?.throwIfAborted();
+          if (spawnError || child && (child.exitCode !== null || child.signalCode !== null)) {
+            const result = await save('failed', String(spawnError ?? `Emulator exited: ${child?.exitCode}`));
+            throw new Error(`AVD startup failed; inspect ${result.directory}`);
+          }
+          try {
+            const actualName = (await run(['-s', serial, 'emu', 'avd', 'name'])).split(/\r?\n/).map(value => value.trim()).filter(Boolean)[0];
+            if (actualName !== name) throw new Error(`AVD identity mismatch at ${serial}`);
+            if (await run(['-s', serial, 'shell', 'getprop', 'sys.boot_completed']) === '1') {
+              const result = await save('ready');
+              signal?.throwIfAborted();
+              return result;
+            }
+          } catch (error) { signal?.throwIfAborted(); lastError = String(error); }
+          await delay(Math.min(500, Math.max(0, deadline - Date.now())), undefined, { signal });
+        }
+        signal?.throwIfAborted();
+        return save('boot-timeout', lastError || 'Boot completion was not observed; process was left running');
+      } catch (error) {
+        if (!signal?.aborted) throw error;
+        const result = await save('cancelled', 'Startup wait cancelled; no emulator termination requested');
+        throw new Error(`AVD startup wait cancelled; emulator was not stopped; inspect ${result.directory}`, { cause: error });
       }
-      return save('boot-timeout', lastError || 'Boot completion was not observed; process was left running');
     });
   });
 }

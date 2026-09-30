@@ -154,6 +154,9 @@ jobs:
           timeout 15s "$adb" shell settings put global transition_animation_scale 0
           timeout 15s "$adb" shell settings put global animator_duration_scale 0
           "$adb" devices -l
+      - name: Verify AVD startup wait cancellation
+        timeout-minutes: 2
+        run: node scripts/verify-avd-cancellation.mjs appvanta-ci emulator-5554
       - name: Download pinned Markor APK
         shell: bash
         run: |
