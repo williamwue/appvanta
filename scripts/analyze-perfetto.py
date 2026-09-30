@@ -136,10 +136,12 @@ Only recorded scheduler execution is measured. This is not CPU frequency-weighte
         raise
     finally:
         summary['cancellation'] = control.finish()
-        if summary['cancellation']['cleanupError'] or summary['cancellation']['processorExited'] is False:
+        cleanup_unverified = (summary['cancellation']['cleanupError'] or summary['cancellation']['processorExited'] is False
+                              or summary['cancellation']['resolverExited'] is False)
+        if cleanup_unverified:
             summary['status'] = 'failed'
         if summary['cancellation']['requested']:
-            summary['status'] = 'cancellation-unverified' if summary['cancellation']['cleanupError'] or summary['cancellation']['processorExited'] is False else 'cancelled'
+            summary['status'] = 'cancellation-unverified' if cleanup_unverified else 'cancelled'
             for artifact in ['metrics.json', 'report.md']:
                 (output / artifact).unlink(missing_ok=True)
         (output / 'analysis.json').write_text(json.dumps(summary, indent=2), encoding='utf-8')

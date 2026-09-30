@@ -14,6 +14,10 @@ CLI 最后两个参数为可选的 Python 路径和分析窗口毫秒数；省�
 
 官方 SDK 首次运行可能下载 Trace Processor。离线环境可直接调用 Python 脚本，通过 `--processor <可执行文件>` 指定已有工具。`--scenario` 可标记实验场景，但不会自动创建受控工作负载。
 
+工具解析/下载现放入独立受管进程，继续使用官方固定版本及 SHA-256 校验。Windows 必须先取得 Job Object 所有权，POSIX 使用独立进程组；完成握手后才允许开始解析。取消终止整个解析进程树（包括官方下载器启动的 curl），并在 `initialization.json` 记录 PID、退出状态与取消状态。可能遗留的官方随机 `.tmp` 下载文件不是可用缓存，不自动删除其他进程的缓存或临时文件。处理器启动服务器期间、宿主硬终止和所有系统的完整取消闭环仍待验证。
+
+Windows `perfetto-initialization-1790738166778` 通过官方 downloader + 本地停滞 HTTP 夹具：取消后解析 PID 和实际 curl PID 均退出、没有完成的缓存二进制。该证据使用注入的下载地址，不是公网断网验收。`perfetto-cancellation-1790738167691` 通过正常真实 trace 分析及 SDK/MCP 加载期取消回归；构建、268 项测试和 4 项收尾回归通过。三系统 CI 已加入 `python scripts/verify-perfetto-initialization.py`，托管结果待确认。
+
 官方接口说明：[Python API](https://perfetto.dev/docs/analysis/trace-processor-python)、[Trace Processor CLI](https://perfetto.dev/docs/reference/trace-processor-cli)。
 
 ## 指标与证据
@@ -28,6 +32,10 @@ CLI 最后两个参数为可选的 Python 路径和分析窗口毫秒数；省�
 指标采用性能测量版本 2，可交给 `baseline` 命令。设备身份取 fingerprint 中的 product 字段，不能与 meminfo 采集的型号字段直接视为相同；采集器名称和版本也必须匹配。阈值应来自独立定义的受控实验，验证脚本中等于当前值的阈值仅用于测试门禁行为。
 
 ## 当前验证与边界
+
+托管证据补充：公开 `6f08fd5` 的 CI `36661266279` 四项任务全部通过，设备归档 `.appvanta/ci-36661266279/.appvanta/ci-evidence` 的 3342 个文件已逐一核验大小和 SHA-256。Linux `perfetto-cancellation-1790737583825` 验证真实处理器加载期间 SDK、MCP、CLI 取消，观测耗时分别为 21/54/50 ms；CLI 使用真实 SIGINT、退出码 1，三者均确认 Python/处理器退出、无成功指标及报告，MCP 后续仍可列工具。该快照不含后续收尾竞态修正，不能替代其托管验证。Windows 控制台信号、macOS 和初始化/下载阶段仍待验收。
+
+同一归档的 API 35 `perfetto-sampling-1790737522524` 完成六条独立 trace，两组 CPU 中位数为 18.432 ms 和 18.086 ms，示例基线比较通过。fingerprint 为 Android 15 / AE3A.240806.043；它不能与 API 37 的测量混用基线，也不证明广泛场景的性能稳定性。
 
 `node scripts/verify-perfetto.mjs <trace> <python>` 验证 CLI/MCP 一致性、源文件哈希、线程汇总、报告、基线通过与失败，以及缺失应用、过长窗口和损坏文件的拒绝路径。
 
