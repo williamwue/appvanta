@@ -67,6 +67,8 @@ class AnalysisControl:
                 self.processor.close()
             except Exception as error:
                 self.cleanup_error = str(error)
+        if self.requested():
+            self.cancelled.set()
         return {'requested': self.cancelled.is_set(), 'processorPid': self.process.pid if self.process else None,
                 'processorExited': self.process.poll() is not None if self.process else None,
                 'cleanupError': self.cleanup_error}

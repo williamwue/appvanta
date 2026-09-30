@@ -50,6 +50,9 @@ jobs:
       - name: Test network recovery helpers
         working-directory: scripts
         run: python -m unittest test_proxy_recovery.py test_network_finalization.py
+      - name: Test Perfetto cancellation finalization
+        working-directory: scripts
+        run: python -m unittest test_perfetto_cancellation.py
       - name: Stage run evidence only
         if: always()
         run: node scripts/stage-evidence.mjs .appvanta/runs .appvanta/ci-evidence

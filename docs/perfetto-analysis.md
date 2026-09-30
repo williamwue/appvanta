@@ -51,6 +51,8 @@ Windows 真实验证 `perfetto-cancellation-1790736192243/verification.json` 通
 
 ## 固定工作量多次采样
 
+取消收尾竞态修正：收尾现在在处理器关闭后同步读取取消文件和期限，避免轮询线程尚未读取请求就把 `requested` 记录为 false。确定性回归在旧实现有两个失败用例，修正后四项通过，包含关闭期间取消和正常收尾。真实 trace/Trace Processor 的收尾注入 `perfetto-finalization-cancel-1790737634110` 先确认指标和报告已生成，再写入取消文件；最终 cancelled、两份成功产物移除、处理器退出且清理无错误。该注入验证收尾边界，不代表真实用户信号时序。Windows SDK/MCP 真实加载期取消复验 `perfetto-cancellation-1790737653266` 通过，构建及源码策略检查通过。
+
 `performance-probe` 是本仓库独立编写的测试应用。每个请求在持久工作线程执行 500 万次固定种子的 xorshift32，并保存校验和、PID/TID、设备 elapsed-realtime 时间和线程 CPU 时间。主机独立计算校验和；原生回执与 trace 必须都包含同一工作线程。APK SHA-256 纳入场景身份，改变构建不会被误作同一基线。
 
 ```text
