@@ -52,7 +52,7 @@ jobs:
         run: python -m unittest test_proxy_recovery.py test_network_finalization.py
       - name: Test Perfetto cancellation finalization
         working-directory: scripts
-        run: python -m unittest test_perfetto_cancellation.py
+        run: python -m unittest test_perfetto_cancellation.py test_perfetto_scheduler.py
       - name: Verify Perfetto downloader cancellation
         timeout-minutes: 4
         run: |

@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { spawn } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
 import { once } from 'node:events';
 import { mkdir, readFile, readdir, writeFile, access } from 'node:fs/promises';
 import { resolve, join } from 'node:path';
@@ -44,6 +44,8 @@ const options = { trace: resolve(source), python, packageName: 'dev.appvanta.per
 const normal = await analyzePerfetto(options);
 assert.equal(JSON.parse(await readFile(join(normal.output, 'analysis.json'), 'utf8')).status, 'passed');
 if (sourceArchive) assert.deepEqual(JSON.parse(await readFile(normal.metricsPath, 'utf8')).metrics, sourceArchive.expectedMetrics, 'Retained trace metrics must match the original device-run analysis');
+const runnable = spawnSync(python, ['scripts/verify-perfetto-runnable.py', '--trace', resolve(source), '--package', options.packageName, '--output', join(root, 'runnable-evidence'), '--window-ms', String(options.windowMs)], { encoding: 'utf8', timeout: 120000 });
+assert.equal(runnable.status, 0, runnable.stderr || String(runnable.error));
 const pre = new AbortController(); pre.abort(new Error('Pre-cancelled'));
 await assert.rejects(analyzePerfetto({ ...options, python: 'must-not-run', signal: pre.signal }), /Pre-cancelled/);
 // Repeated packet bytes prolong real parser work; no metrics are asserted for this synthetic trace.

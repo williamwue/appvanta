@@ -8,7 +8,17 @@ import re
 import sys
 from perfetto_cancellation import AnalysisControl, controlled_processor
 
-SQL_VERSION = 'appvanta-sched-v1'
+SQL_VERSION = 'appvanta-sched-v2'
+
+
+def runnable_query(upids, start, end):
+    return f'''SELECT COUNT(*) AS state_rows,
+COALESCE(SUM(CASE WHEN s.state IN ('R','R+') AND s.dur >= 0
+THEN MAX(0, MIN(s.ts+s.dur,{end}) - MAX(s.ts,{start})) ELSE 0 END),0) AS observed_ns,
+COALESCE(SUM(CASE WHEN s.state IN ('R','R+') AND s.dur >= 0 THEN 1 ELSE 0 END),0) AS completed_slices,
+COALESCE(SUM(CASE WHEN s.state IN ('R','R+') AND s.dur < 0 THEN 1 ELSE 0 END),0) AS incomplete_slices
+FROM thread_state s JOIN thread t USING(utid)
+WHERE t.upid IN ({upids}) AND s.ts < {end} AND (s.dur < 0 OR s.ts+s.dur > {start})'''
 
 def analyze(trace, package, output, scenario, window_ms=None, processor=None, cancel_file=None):
     from perfetto.trace_processor import TraceProcessorConfig
@@ -69,6 +79,12 @@ GROUP BY t.utid ORDER BY scheduled_ns DESC''')
             total = sum(row['scheduled_ns'] for row in threads)
             if total < 0 or total > 9007199254740991:
                 raise ValueError('Scheduled time cannot be represented safely')
+            runnable = query(runnable_query(upids, start, end))[0]
+            if not isinstance(runnable['observed_ns'], int) or not 0 <= runnable['observed_ns'] <= 9007199254740991:
+                raise ValueError('Runnable time cannot be represented safely')
+            summary['runnableEvidence'] = {**runnable,
+                'scope': 'Recorded completed R/R+ thread states clipped to analysis window; incomplete states excluded',
+                'available': runnable['state_rows'] > 0}
             metadata = query("SELECT str_value FROM metadata WHERE name='android_build_fingerprint'")
             fingerprint = metadata[0]['str_value'] if len(metadata) == 1 else None
             if not fingerprint or len(fingerprint.split('/')) < 3:
@@ -82,6 +98,8 @@ GROUP BY t.utid ORDER BY scheduled_ns DESC''')
                 'cpu.scheduledTime': {'unit': 'ns', 'value': total},
                 'cpu.singleCoreEquivalent': {'unit': 'percent', 'value': total / (end - start) * 100},
             }}
+            if runnable['state_rows'] > 0:
+                measurement['metrics']['cpu.observedRunnableTime'] = {'unit': 'ns', 'value': runnable['observed_ns']}
             summary.update(status='passed', threads=threads, measurement='metrics.json')
             step_rows = []
             marker_file = trace.parent / 'step-markers.json'
@@ -121,6 +139,7 @@ FROM sched s JOIN thread t USING(utid) WHERE t.upid IN ({upids}) AND s.ts < {fin
 - Analysis window: {duration_ms} ms
 - Scheduled CPU time: {total/1000000:.3f} ms
 - Single-core equivalent: {total/(end-start)*100:.3f}% (can exceed 100% on multiple cores)
+- Observed runnable wait: {str(runnable['observed_ns']) + ' ns' if runnable['state_rows'] else 'unavailable (no application thread states)'}; {runnable['incomplete_slices']} unfinished runnable states excluded
 - [Metrics](metrics.json) / [Queries and evidence](analysis.json)
 
 | PID | TID | Thread | Scheduled ms |
@@ -128,7 +147,7 @@ FROM sched s JOIN thread t USING(utid) WHERE t.upid IN ({upids}) AND s.ts < {fin
 {rows}
 {step_table}
 
-Only recorded scheduler execution is measured. This is not CPU frequency-weighted work, frame jank, or proof of a controlled workload. Step intervals, when present, use device trace markers and include observation, actions, checks and recovery; they are not isolated application latency. Step metrics use their full intervals, independently of the overall analysis window. Zero scheduled time is permitted only when process metadata and scheduling data exist. Build product identity is derived from the trace fingerprint.
+Only recorded scheduler execution and completed runnable states are measured. Runnable wait sums R/R+ intervals across application threads; it is not wall-clock latency or complete wakeup latency. Missing wakeup events and unfinished states can undercount wait. No application thread states means the runnable metric is omitted, not zero. This is not CPU frequency-weighted work, frame jank, or proof of a controlled workload. Step intervals, when present, use device trace markers and include observation, actions, checks and recovery; they are not isolated application latency. Step metrics use their full intervals, independently of the overall analysis window. Zero scheduled time is permitted only when process metadata and scheduling data exist. Build product identity is derived from the trace fingerprint.
 ''', encoding='utf-8')
     except Exception as error:
         summary['status'] = 'cancelled' if control.requested() else 'failed'
