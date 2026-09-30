@@ -18,6 +18,8 @@ CLI 最后两个参数为可选的 Python 路径和分析窗口毫秒数；省�
 
 Windows `perfetto-initialization-1790738166778` 通过官方 downloader + 本地停滞 HTTP 夹具：取消后解析 PID 和实际 curl PID 均退出、没有完成的缓存二进制。该证据使用注入的下载地址，不是公网断网验收。`perfetto-cancellation-1790738167691` 通过正常真实 trace 分析及 SDK/MCP 加载期取消回归；构建、268 项测试和 4 项收尾回归通过。三系统 CI 已加入 `python scripts/verify-perfetto-initialization.py`，托管结果待确认。
 
+同一验收脚本现扩展真实 SDK 路径：从 `analyzePerfetto` 发起分析，在 HTTP 下载已开始时触发 AbortSignal，核对 cancelled、解析进程退出、处理器尚未启动、无成功指标/报告，并独立检查分析 Python、解析进程和 curl PID 已停止。Windows `perfetto-initialization-1790738394038` 通过。输入仅用于经过初始化阶段，不作为可解析 trace 或性能证据；该场景尚未验证 MCP 下载期取消。较早的 Linux CI `36663758987` 已通过直接解析器下载取消，归档 `perfetto-initialization-1790738376530` 已核验，早期快照不包含本次 SDK 扩展。
+
 官方接口说明：[Python API](https://perfetto.dev/docs/analysis/trace-processor-python)、[Trace Processor CLI](https://perfetto.dev/docs/reference/trace-processor-cli)。
 
 ## 指标与证据
