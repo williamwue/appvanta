@@ -161,6 +161,8 @@ Only recorded scheduler execution and completed runnable states are measured. Ru
             summary['status'] = 'failed'
         if summary['cancellation']['requested']:
             summary['status'] = 'cancellation-unverified' if cleanup_unverified else 'cancelled'
+        if summary['status'] != 'passed':
+            summary.pop('measurement', None)
             for artifact in ['metrics.json', 'report.md']:
                 (output / artifact).unlink(missing_ok=True)
         (output / 'analysis.json').write_text(json.dumps(summary, indent=2), encoding='utf-8')

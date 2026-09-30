@@ -34,6 +34,8 @@ Windows/API 37 `avd-cancellation-1790741502527` 已验证 SDK 复用正在运行
 
 新实例验收还会复制启动日志快照并记录字节数/SHA-256，随运行证据归档。SDK `avd-cancellation-1790742136000` 通过包含日志快照及客户端收尾后的设备检查；运行中的模拟器仍可能继续写原日志，快照摘要只描述保存的字节。
 
+托管 Linux/API 35 验收：公开 `280e921` 的 [CI 36668578061](https://github.com/williamwue/appvanta/actions/runs/36668578061) 七项全部通过；下载后的 3475 个设备文件均通过大小与 SHA-256 校验。复用取消 SDK `avd-cancellation-1790742280482`（5 ms）、MCP `1790742283909`（44 ms）和真实 CLI SIGINT `1790742285257`（42 ms，退出码 1）均保存 cancelled、释放两层启动锁，boot ID 不变，随后可再次复用。MCP 新实例 `1790742331202` 在 booting 后 6 ms 确认取消，新模拟器继续启动，boot ID 改变；取消响应被抑制，后续 tools/list 成功，客户端关闭后设备仍 ready。其 9097 字节启动日志快照摘要 `eac329819fe10e05f133dcdff200ec7b9b5ca0fcbdc167b4b67ded4ccb147e23` 已独立复核。本机归档位于集成工作区 `.appvanta/ci-36668578061/.appvanta/ci-evidence/`，完整性回执为 `.appvanta/ci-36668578061-integrity.json`。这些结果补足上文 Linux 动态验证，不代表 macOS AVD、Windows AVD 控制台信号、全部启动故障或真机/OEM 已验收。
+
 # 模拟器图形后端
 
 Windows / API 37 已实测 `swiftshader` 启动，日志确认 GLES/Vulkan 使用 Google SwiftShader；启动证据 `.appvanta/emulators/1790429857178-d16c55d3-69bd-4c0d-aa34-1b3296382d1b/startup.json`。同一实例运行长录屏仍发生退出，因此该参数是显式配置能力，不作为已修复模拟器稳定性的声明。
