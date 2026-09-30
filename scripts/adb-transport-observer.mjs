@@ -2,6 +2,7 @@ import { spawn, execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
+import { collectAdbServerEvidence } from './adb-server-evidence.mjs';
 
 export async function observeAdbTransport(device, directory, adb = 'adb') {
   const events = [], snapshots = [];
@@ -29,7 +30,8 @@ export async function observeAdbTransport(device, directory, adb = 'adb') {
         return { name, status: 'passed', stdout: result.stdout, stderr: result.stderr };
       } catch (error) { return { name, status: 'failed', error: String(error), stdout: error.stdout, stderr: error.stderr }; }
     }));
-    const result = { phase, at: new Date().toISOString(), results };
+    const server = includeLogs ? await collectAdbServerEvidence(join(directory, `adb-server-${snapshots.length}`), adb) : undefined;
+    const result = { phase, at: new Date().toISOString(), results, server };
     snapshots.push(result); await save(); return result;
   };
   const stop = async () => {

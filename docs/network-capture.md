@@ -1,6 +1,10 @@
 # Android 请求级采集
 
+最新故障定位：CI `36662397215` 的采样首条 trace 拉取失败，归档 `.appvanta/ci-36662397215/.appvanta/ci-evidence` 的 3189 个文件已核验大小与 SHA-256。`perfetto-sampling-1790738416227/adb-transport.json` 记录主机时间 03:20:26.645 设备 offline，随后 transport 2 消失，03:20:27.015 transport 3 online；事件无丢弃。设备 adbd 日志记录 `connection terminated: write failed`、offline、销毁 host-18，之后建立 host-17，日志 PID 为 437。结束快照的 boot ID/PID 查询因 offline 失败，不能据此确认前后 boot ID 不变。此证据证明本次拉取失败伴随设备端连接中断，不能确定中断触发者或解释全部历史失败；尚缺主机 ADB server 同期日志。原始失败、远端保留状态及 lease 证据保持不变。
+
 ## 设备端连接重建后的采集恢复
+
+主机诊断补充：`scripts/adb-server-evidence.mjs <输出目录>` 从 `adb server-status` 读取日志路径，仅复制普通文件末尾最多 2 MiB，保存偏移、大小、SHA-256、截断/短读标志；不可用时保留原因，不改变恢复结果。观测器的日志快照及 CI 结束步骤会采集它。CI 在首次启动模拟器前重启其独占 ADB server，并通过 `ADB_TRACE=transport` 启用传输诊断；本机验证不重启已有 server。Windows 实际观测 `adb-server-observation-1790738820163` 验证副本摘要、大小上限和观测进程退出，42 项脚本测试通过；托管 transport 日志与故障关联仍待新运行，旧失败原因未改判。
 
 复验命令：`node scripts/verify-network-capture-recovery.mjs emulator-5554 device-reconnect`，需配置 `APPVANTA_MITMDUMP`。该场景仅接受显式模拟器序列号，在录屏和 Perfetto 均启动、录屏已有字节后，读取 PID 与命令行证明采集进程正在运行，再执行 `adb reconnect device`。验证 transport ID 变化、boot ID 不变、原宿主/租约/代理设置及远端文件仍保留，然后强杀网络 Worker 与宿主，使用原 token 显式恢复。恢复后逐文件核对大小及 SHA-256、远端控制文件清理、代理还原和租约释放。
 

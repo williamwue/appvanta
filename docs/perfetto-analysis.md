@@ -35,6 +35,8 @@ Windows `perfetto-initialization-1790738166778` 通过官方 downloader + 本地
 
 ## 当前验证与边界
 
+下载取消跨系统证据：CI `36663758987` 的 Windows/Linux/macOS 三个主机任务通过，每个平台各 21 个归档文件已校验大小及 SHA-256。Windows `perfetto-initialization-1790738492512`、Linux `1790738376530`、macOS `1790738371982` 均验证官方 downloader 在本地 HTTP 停滞后取消，解析器及 curl 停止、无已完成缓存。该快照不包含后续 SDK 下载期取消扩展，不能据此扩大为全部初始化阶段或公网断网验收。
+
 托管证据补充：公开 `6f08fd5` 的 CI `36661266279` 四项任务全部通过，设备归档 `.appvanta/ci-36661266279/.appvanta/ci-evidence` 的 3342 个文件已逐一核验大小和 SHA-256。Linux `perfetto-cancellation-1790737583825` 验证真实处理器加载期间 SDK、MCP、CLI 取消，观测耗时分别为 21/54/50 ms；CLI 使用真实 SIGINT、退出码 1，三者均确认 Python/处理器退出、无成功指标及报告，MCP 后续仍可列工具。该快照不含后续收尾竞态修正，不能替代其托管验证。Windows 控制台信号、macOS 和初始化/下载阶段仍待验收。
 
 同一归档的 API 35 `perfetto-sampling-1790737522524` 完成六条独立 trace，两组 CPU 中位数为 18.432 ms 和 18.086 ms，示例基线比较通过。fingerprint 为 Android 15 / AE3A.240806.043；它不能与 API 37 的测量混用基线，也不证明广泛场景的性能稳定性。
