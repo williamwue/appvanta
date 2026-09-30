@@ -35,6 +35,19 @@ Windows `perfetto-initialization-1790738166778` 通过官方 downloader + 本地
 
 ## 当前验证与边界
 
+当前取消验收矩阵（具体运行见下文；历史段落中的“待验收”只代表当时检查时点）：
+
+| 取消阶段/入口 | Windows | Linux | macOS |
+|---|---|---|---|
+| SDK 下载期，本地停滞 HTTP + 官方 downloader | 已验证 | 已验证 | 已验证 |
+| MCP 下载期，取消后继续处理请求 | 已验证 | 已验证 | 已验证 |
+| SDK/MCP 真实 trace 加载期 | 已验证 | 已验证 | 待验收 |
+| CLI 真实中断信号，trace 加载期 | 待验收 | 已验证 SIGINT | 待验收 |
+| 处理器服务器启动期间 | 直接 Python 未就绪夹具通过；SDK/MCP 待验收 | 待验收 | 待验收 |
+| 宿主硬终止后的进程回收 | 待验收 | 待验收 | 待验收 |
+
+MCP 下载期三系统归档：CI `36664809527` 的主机任务全部通过，每个平台各 30 个文件完成大小/SHA-256 核验。Windows `perfetto-initialization-1790739379590`、Linux `1790739225958`、macOS `1790739232354` 均确认取消后分析 Python/解析器/curl 停止、无成功报告、取消请求响应被抑制、后续 `tools/list` 成功。它们是受控本地 HTTP 夹具证据，不是公网断网或启动服务器阶段证据。
+
 MCP 下载期取消：Windows `perfetto-initialization-1790739074311` 同时通过 SDK 与真实 MCP stdio 客户端。收到 `notifications/cancelled` 后，分析 Python、解析器和 curl 均停止，处理器未启动、无成功指标/报告；MCP 抑制被取消请求的响应，并继续处理 `tools/list`。客户端验证现独立于 Python HTTP 夹具，三系统 CI 自动运行 SDK/MCP 两种客户端。首次重构验证误将 `.cancel` 文件计作分析目录，修正为只检查目录后通过；它不是产品取消失败。此 MCP 场景仍待 Linux/macOS 托管结果，不替代服务器启动期间或硬终止验收。
 
 SDK 下载期取消的三系统验收现已完成：CI `36664032094` 主机任务全部通过，每个平台各 26 个文件大小/SHA-256 核验通过。Windows `perfetto-initialization-1790738770620`、Linux `1790738602011`、macOS `1790738593691` 均从 SDK 发起真实分析，在官方 downloader 访问本地停滞 HTTP 夹具后触发 AbortSignal；确认分析 Python、解析器、curl 停止，分析 cancelled，处理器未启动且无成功指标/报告。归档位于 `.appvanta/ci-36664032094-{windows,ubuntu,macos}`。该证据覆盖 SDK 下载阶段，未覆盖 MCP 下载期、处理器服务器启动期或公网断网，整项 Perfetto 验收仍未完成。
@@ -53,13 +66,15 @@ SDK 下载期取消的三系统验收现已完成：CI `36664032094` 主机任�
 
 Flow 自动启动和结束采集已接入，成功、失败和取消路径均保存产物。
 
-尚未完成：广泛场景的可重复基线、帧卡顿分析、分析启动/下载阶段取消、跨系统取消及完整设备断连验收。采集宿主强杀与 TCP 拉取中断恢复已有有限验收，见 network-capture.md。指标不表示墙钟耗时或频率加权工作量。
+尚未完成：广泛场景的可重复基线、帧卡顿分析、处理器服务器启动期取消、macOS 解析期取消、Windows 控制台信号、宿主硬终止及完整设备断连验收。SDK/MCP 下载期已覆盖三系统，不能与这些未验收窗口混为一项。采集宿主强杀与 TCP 拉取中断恢复已有有限验收，见 network-capture.md。指标不表示墙钟耗时或频率加权工作量。
 
 ## 分析取消
 
 SDK `analyzePerfetto` 接受 `signal`；CLI 的中断控制器和 MCP `notifications/cancelled` 接入同一路径。调用前已取消时不启动 Python。运行中向该次分析的唯一取消文件写入请求，Python 监视请求并通过 Perfetto 的关闭接口回收自身创建的处理器；关闭与正常退出串行化。源 trace 保留，取消分析删除本次输出目录中的指标和报告，`analysis.json` 保存 `cancelled`、处理器 PID 与退出证据。无法确认回收时记录 `cancellation-unverified`；SDK 错误仅表示请求取消，最终状态以记录为准。
 
-Python 的协作期限为 110 秒，宿主执行期限为 120 秒。取消不会立刻强杀 Python；处理器尚未初始化时需等待初始化返回或期限结束。首次工具下载、初始化挂起、宿主硬终止及 Windows 控制台真实 Ctrl+C 仍需专项验收，不能把已运行处理器的回收证据扩大到这些窗口。调用方请求已完成后才送达的取消，也不改写已有正常完成结果。
+Python 的协作期限为 110 秒，宿主执行期限为 120 秒。取消不会立刻强杀分析 Python；工具下载期间由它关闭受管解析进程树。下载完成后，AppVanta 直接持有处理器进程树，在服务器就绪前就能取消，并通过官方 `TraceProcessor(addr=...)` 接口加载和分析。启动等待上限沿用 30 秒，每次本地状态请求限 250 毫秒，保留 stdout/stderr 和 `processor.json` 的 `starting-server` / `loading-trace` 阶段。宿主硬终止及 Windows 控制台真实 Ctrl+C 仍需专项验收。调用方请求已完成后才送达的取消，也不改写已有正常完成结果。
+
+启动期故障与修复证据：旧实现 `perfetto-startup-1790739629469` 在真实启动但不提供 HTTP 服务的夹具上，取消后超过 45 秒未返回，验证失败；终止分析后确认夹具 PID 已退出。持有启动进程后，`perfetto-startup-1790739807919` 直接 Python 路径在约 227 ms 内 cancelled，启动进程及夹具子进程退出，无成功报告；这是未就绪夹具，不是完整 SDK/MCP 启动验收。`perfetto-cancellation-1790739808705` 复验真实 trace 正常分析及 SDK/MCP 加载期取消通过，加载期验收明确等待 `loading-trace`；`perfetto-initialization-1790739835903` 的 SDK/MCP 下载取消回归通过。构建、268 项测试和 4 项收尾回归通过，三系统 CI 已加入启动夹具。
 
 Windows 真实验证 `perfetto-cancellation-1790736192243/verification.json` 通过正常分析、预先取消，以及 SDK/MCP 在真实 Trace Processor 加载期间取消：取消前 Python 和处理器均存活，取消后两者均退出、无成功指标/报告，MCP 仍可列工具。使用重复 trace 包构造的较大输入仅用于延长真实解析窗口，不用于性能结论。早期验收脚本曾错误等待被取消 MCP 请求的响应；协议会抑制该响应，产品取消记录与退出证明保留在 `perfetto-cancellation-1790735857573`。修正后的首轮 `1790736038055` 和最终轮均通过。
 

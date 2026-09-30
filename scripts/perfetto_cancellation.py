@@ -4,8 +4,10 @@ import os
 from pathlib import Path
 import subprocess
 import sys
+import socket
 import threading
 import time
+from urllib import request, error as url_error
 
 
 class AnalysisCancelled(Exception):
@@ -20,6 +22,9 @@ class AnalysisControl:
         self.stopped = threading.Event()
         self.processor = None
         self.process = None
+        self.process_job = None
+        self.process_lock = threading.RLock()
+        self.process_closed = False
         self.cleanup_error = None
         self.resolver = None
         self.deadline = time.monotonic() + 110
@@ -38,19 +43,23 @@ class AnalysisControl:
         while not self.stopped.wait(0.025):
             if self.requested():
                 self.cancelled.set()
-                # The constructor may still be downloading or starting its server.
-                # Wait until its public HTTP client and owned resources exist.
-                if self.processor is not None and hasattr(self.processor, 'http'):
+                if self.process is not None:
                     try:
-                        self.process = self.process or getattr(self.processor, 'subprocess', None)
-                        self.processor.close()
+                        self.stop_server()
                     except Exception as error:
                         self.cleanup_error = str(error)
                     return
 
+    def stop_server(self):
+        from perfetto.trace_processor.process_tree import terminate_process_tree
+        with self.process_lock:
+            if self.process is not None and not self.process_closed:
+                terminate_process_tree(self.process, self.process_job)
+                self.process_job = None
+                self.process_closed = True
+
     def chunks(self, trace):
         self.check()
-        self.process = self.processor.subprocess
         (self.output / 'processor.json').write_text(json.dumps({'version': 1, 'pid': self.process.pid, 'analysisPid': os.getpid(), 'phase': 'loading-trace'}), encoding='utf-8')
         with Path(trace).open('rb') as source:
             while True:
@@ -65,9 +74,13 @@ class AnalysisControl:
         self.stopped.set()
         self.monitor.join()
         if self.processor is not None:
-            self.process = self.process or getattr(self.processor, 'subprocess', None)
             try:
                 self.processor.close()
+            except Exception as error:
+                self.cleanup_error = str(error)
+        if self.process is not None:
+            try:
+                self.stop_server()
             except Exception as error:
                 self.cleanup_error = str(error)
         if self.requested():
@@ -118,17 +131,55 @@ def resolve_processor(control, bin_path):
         (control.output / 'initialization.json').write_text(json.dumps(evidence), encoding='utf-8')
 
 
+def start_server(control, binary, timeout):
+    from perfetto.trace_processor.process_tree import create_kill_on_close_job
+    control.check()
+    with socket.socket() as listener:
+        listener.bind(('127.0.0.1', 0))
+        port = listener.getsockname()[1]
+    command = [sys.executable, binary] if os.name == 'nt' and not binary.endswith('.exe') else [binary]
+    command += ['-D', '--http-port', str(port), '--no-ftrace-raw']
+    flags = subprocess.CREATE_NO_WINDOW | subprocess.CREATE_NEW_PROCESS_GROUP if os.name == 'nt' else 0
+    with control.process_lock:
+        with (control.output / 'processor.stdout.log').open('wb') as stdout, (control.output / 'processor.stderr.log').open('wb') as stderr:
+            control.process = subprocess.Popen(command, stdin=subprocess.DEVNULL, stdout=stdout, stderr=stderr,
+                                               creationflags=flags, start_new_session=os.name != 'nt')
+        control.process_job = create_kill_on_close_job(control.process)
+        if os.name == 'nt' and control.process_job is None:
+            control.stop_server()
+            raise RuntimeError('Cannot own Perfetto server process tree')
+    (control.output / 'processor.json').write_text(json.dumps({'version': 1, 'pid': control.process.pid,
+        'analysisPid': os.getpid(), 'phase': 'starting-server'}), encoding='utf-8')
+    address = 'http://127.0.0.1:' + str(port)
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        control.check()
+        if control.process.poll() is not None:
+            raise RuntimeError('Perfetto server exited before readiness; see processor logs')
+        try:
+            with request.urlopen(address + '/status', timeout=0.25) as response:
+                if response.status == 200:
+                    control.check()
+                    return address
+        except (url_error.URLError, TimeoutError, ConnectionError):
+            pass
+        control.cancelled.wait(0.05)
+    control.check()
+    raise RuntimeError('Perfetto server readiness timed out; see processor logs')
+
+
 def controlled_processor(control, trace, config):
     from perfetto.trace_processor import TraceProcessor
     config.bin_path = resolve_processor(control, config.bin_path)
     control.check()
+    address = start_server(control, config.bin_path, config.load_timeout)
 
     class OwnedProcessor(TraceProcessor):
         def __init__(self):
             self.close_lock = threading.RLock()
             control.processor = self
             try:
-                super().__init__(trace=control.chunks(trace), config=config)
+                super().__init__(trace=control.chunks(trace), addr=address, config=config)
                 control.check()
             except BaseException:
                 self.close()
@@ -136,6 +187,7 @@ def controlled_processor(control, trace, config):
 
         def close(self):
             with self.close_lock:
+                control.stop_server()
                 super().close()
 
     return OwnedProcessor()

@@ -4,6 +4,8 @@
 
 ## 设备端连接重建后的采集恢复
 
+API 35 托管验收补充：CI `36662788240` 四项任务通过，设备归档 3401 个文件已完成大小/SHA-256 校验。`network-capture-recovery-1790738758171` 记录录屏/Perfetto 活跃 PID，显式重连后 transport 2→3、boot ID 及 adbd PID 435 不变；随后宿主强杀，以原租约恢复，录屏 65600 字节、trace 173397 字节，四份产物/日志的实际归档字节另与恢复记录逐一比对摘要。两类均 recovered/cleaned，代理还原、租约释放。此证据扩展到 API 35，仍不覆盖 USB、真机/OEM 或故障 DATA 帧时刻，也不解释历史自发断连。
+
 主机诊断补充：`scripts/adb-server-evidence.mjs <输出目录>` 从 `adb server-status` 读取日志路径，仅复制普通文件末尾最多 2 MiB，保存偏移、大小、SHA-256、截断/短读标志；不可用时保留原因，不改变恢复结果。观测器的日志快照及 CI 结束步骤会采集它。CI 在首次启动模拟器前重启其独占 ADB server，并通过 `ADB_TRACE=transport` 启用传输诊断；本机验证不重启已有 server。Windows 实际观测 `adb-server-observation-1790738820163` 验证副本摘要、大小上限和观测进程退出，42 项脚本测试通过；托管 transport 日志与故障关联仍待新运行，旧失败原因未改判。
 
 复验命令：`node scripts/verify-network-capture-recovery.mjs emulator-5554 device-reconnect`，需配置 `APPVANTA_MITMDUMP`。该场景仅接受显式模拟器序列号，在录屏和 Perfetto 均启动、录屏已有字节后，读取 PID 与命令行证明采集进程正在运行，再执行 `adb reconnect device`。验证 transport ID 变化、boot ID 不变、原宿主/租约/代理设置及远端文件仍保留，然后强杀网络 Worker 与宿主，使用原 token 显式恢复。恢复后逐文件核对大小及 SHA-256、远端控制文件清理、代理还原和租约释放。

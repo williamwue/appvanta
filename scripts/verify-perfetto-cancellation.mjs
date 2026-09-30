@@ -35,6 +35,7 @@ async function awaitProcessor(before, finished) {
       let processor;
       try { processor = JSON.parse(await readFile(join(directory, 'processor.json'), 'utf8')); }
       catch (error) { if (error.code === 'ENOENT' || error instanceof SyntaxError) continue; throw error; }
+      if (processor.phase !== 'loading-trace') continue;
       assert(alive(processor.pid) && alive(processor.analysisPid), 'Both owned processes must be live before cancellation');
       return { directory, processor };
     }
