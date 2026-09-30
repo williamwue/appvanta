@@ -5,6 +5,7 @@ import { mkdir, readFile, readdir, writeFile, access } from 'node:fs/promises';
 import { resolve, join } from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
 import { createHash } from 'node:crypto';
+import { pathToFileURL } from 'node:url';
 import { verifyEvidence } from '../packages/core/dist/archive.mjs';
 import { analyzePerfetto } from '../packages/android/dist/index.js';
 import { readMcpResponses } from './mcp-response-reader.mjs';
@@ -70,9 +71,9 @@ async function awaitProcessor(before, finished) {
   throw new Error('Processor startup checkpoint timed out');
 }
 const results = [];
-for (const client of ['sdk', 'mcp', 'cli']) {
+for (const client of ['sdk', 'mcp', 'cli', 'owner-kill']) {
   const before = new Set(await readdir('.appvanta/runs'));
-  let child, exited, completed = false, rpcOutput = '';
+  let child, exited, active, completed = false, rpcOutput = '';
   const controller = new AbortController();
   const consoleRequest = join(root, 'cli-console.request');
   try {
@@ -86,6 +87,11 @@ for (const client of ['sdk', 'mcp', 'cli']) {
       child.stdin.write(JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'initialize', params: { protocolVersion: '2024-11-05', capabilities: {}, clientInfo: { name: 'perfetto-cancel-verifier', version: '1' } } }) + '\n'); await initialized;
       child.stdin.write(JSON.stringify({ jsonrpc: '2.0', method: 'notifications/initialized' }) + '\n');
       child.stdin.write(JSON.stringify({ jsonrpc: '2.0', id: 2, method: 'tools/call', params: { name: 'analyze_perfetto', arguments: { ...options, trace: large } } }) + '\n');
+    } else if (client === 'owner-kill') {
+      const script = `import {analyzePerfetto} from ${JSON.stringify(pathToFileURL(resolve('packages/android/dist/index.js')).href)}; await analyzePerfetto(JSON.parse(process.argv[1]));`;
+      child = spawn(process.execPath, ['--input-type=module', '-e', script, JSON.stringify({ ...options, trace: large })], { windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'] });
+      exited = once(child, 'exit'); child.stdout.resume(); child.stderr.resume();
+      pending = exited.then(([code, signal]) => ({ code, signal })).finally(() => { completed = true; });
     } else {
       const command = [process.execPath, 'packages/cli/dist/index.js', 'analyze-perfetto', large, options.packageName, python, '6000'];
       child = process.platform === 'win32'
@@ -95,10 +101,11 @@ for (const client of ['sdk', 'mcp', 'cli']) {
       child.stderr.on('data', data => { stderr += data; });
       pending = exited.then(([code, signal]) => ({ code, signal, stderr })).finally(() => { completed = true; });
     }
-    const active = await awaitProcessor(before, () => completed);
+    active = await awaitProcessor(before, () => completed);
     const started = Date.now();
     if (client === 'sdk') controller.abort(new Error('Verifier cancelled active analysis'));
     else if (client === 'mcp') child.stdin.write(JSON.stringify({ jsonrpc: '2.0', method: 'notifications/cancelled', params: { requestId: 2, reason: 'Verifier cancelled active analysis' } }) + '\n');
+    else if (client === 'owner-kill') assert(child.kill('SIGKILL'), 'SDK owner must still be live when terminated');
     else if (process.platform === 'win32') await writeFile(consoleRequest, 'cancel', { flag: 'wx' });
     else child.kill('SIGINT');
     const response = client === 'mcp' ? { cancelledResponseSuppressed: true } : await pending;
@@ -116,12 +123,21 @@ for (const client of ['sdk', 'mcp', 'cli']) {
     while (Date.now() < deadline) {
       try { analysis = JSON.parse(await readFile(join(active.directory, 'analysis.json'), 'utf8')); }
       catch (error) { if (error.code !== 'ENOENT' && !(error instanceof SyntaxError)) throw error; }
-      if (analysis && !alive(active.processor.analysisPid)) break;
+      if ((analysis || client === 'owner-kill') && !alive(active.processor.analysisPid) && !alive(active.processor.pid)) break;
       await delay(10);
     }
-    assert(analysis, 'Cancellation evidence missing');
-    assert.equal(analysis.status, 'cancelled');
-    assert.equal(analysis.cancellation.processorExited, true); assert.equal(analysis.cancellation.cleanupError, null);
+    if (client === 'owner-kill') {
+      await writeFile(join(root, 'owner-death-observation.json'), JSON.stringify({ ownerPid: child.pid, ownerExit: response,
+        processor: active.processor, elapsedMs: Date.now() - started, analysis: analysis ?? null,
+        analysisAlive: alive(active.processor.analysisPid), processorAlive: alive(active.processor.pid) }, null, 2));
+      assert(response.signal === 'SIGKILL' || response.code !== 0, 'Owner must not exit successfully');
+      assert(Date.now() - started < 5000, 'Owner death cleanup exceeded five seconds');
+      assert.notEqual(analysis?.status, 'passed', 'Killed owner must not leave successful analysis');
+    } else {
+      assert(analysis, 'Cancellation evidence missing');
+      assert.equal(analysis.status, 'cancelled');
+      assert.equal(analysis.cancellation.processorExited, true); assert.equal(analysis.cancellation.cleanupError, null);
+    }
     assert.equal(alive(active.processor.pid), false); assert.equal(alive(active.processor.analysisPid), false);
     await assert.rejects(access(join(active.directory, 'metrics.json')));
     await assert.rejects(access(join(active.directory, 'report.md')));
@@ -131,9 +147,16 @@ for (const client of ['sdk', 'mcp', 'cli']) {
       assert((await listed)[0].result.tools.length > 0);
       assert(!rpcOutput.trim().split('\n').map(JSON.parse).some(message => message.id === 2));
     }
-    results.push({ client, ...active, elapsedMs: Date.now() - started, analysis, response });
+    results.push({ client, ...active, elapsedMs: Date.now() - started, analysis: analysis ?? null, response,
+      ...(client === 'owner-kill' ? { scope: 'External observation after SDK owner hard termination; not a cooperative cancellation receipt', analysisExited: true, processorExited: true, successArtifactsAbsent: true } : {}) });
   } finally {
     controller.abort(new Error('Verifier teardown'));
+    if (client === 'owner-kill' && active && alive(active.processor.analysisPid)) {
+      await writeFile(`${active.directory}.cancel`, JSON.stringify({ fixtureCleanup: true }), { flag: 'wx' });
+      const deadline = Date.now() + 5000;
+      while (alive(active.processor.analysisPid) && Date.now() < deadline) await delay(25);
+      await writeFile(join(root, 'owner-death-fixture-cleanup.json'), JSON.stringify({ analysisAlive: alive(active.processor.analysisPid), processorAlive: alive(active.processor.pid) }));
+    }
     if (child) { child.kill(); await exited; }
     await writeFile(join(root, 'progress.json'), JSON.stringify(results, null, 2));
   }
