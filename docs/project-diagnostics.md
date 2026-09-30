@@ -30,3 +30,7 @@ Windows `gradle-project-1790749080206` 通过设置无有效启动 JAR 的 GRADL
 修正快照 `c6208fd` 的 CI `36677718660`：Linux `gradle-project-1790749295701` 与 macOS `gradle-project-1790749306277` 的真实构建、APK 检查及三种失败诊断通过，各 106 个归档文件核验通过。Linux 回执显示环境 GRADLE_HOME 为 `/usr/share/gradle-9.7.1`，实际从 PATH 选择 8.13；macOS 无环境覆盖，同样从 PATH 选择。两边启动 JAR SHA-256 均为 `ca68e720409e7bb345fb14d8b6ba57600028e399f4b2a7ca7633c26d4d38bd1c`。Windows 的 Gradle 步骤已通过，完整任务/归档在本次检查仍待后续确认。
 
 验证脚本现在为每次 Gradle 调用先保存日志及 `.command.json` 回执，再分析和断言。超时、输出上限、启动失败也保存可获得的 stdout/stderr、摘要和退出原因；日志按 stdout 后 stderr 拼接，不宣称跨流时序。超时被独立标记，即使子进程处理终止信号后退出 0 也不能成为成功；超时一秒后仍未退出则升级终止该直接子进程。回执明确 `descendantCleanup=unverified`，此脚本尚不具备产品构建执行器所需的 Gradle daemon/后代进程恢复保证。Windows `gradle-project-1790749521060` 真实构建完整复验通过，脚本回归 48 通过、1 个 POSIX 信号用例跳过；后者仍待托管验证。
+
+三系统收敛证据：CI `36677718660` 的 Windows、Linux、macOS 主机任务均成功，各 106 个归档文件、合计 318 个文件通过完整性校验。Windows `gradle-project-1790749363001` 的环境 GRADLE_HOME 为 `C:\ProgramData\chocolatey\lib\gradle\tools\gradle-9.8.0`，实际选择 PATH 中的固定 8.13；与另外两平台使用同一启动 JAR。三平台 `sources.json` SHA-256 均为 `0033fa91d937aa52b9a2db40734aefe1e7e25c857c4df9ddc1a1d9103bdc049a`，wrapper/build 退出码均为 0，SDK/资源/依赖三个失败退出码均为 1 且分类匹配，三客户端报告一致。核验汇总在集成工作区 `.appvanta/gradle-three-platform-36677718660.json`。
+
+上述证据绑定公开 `c6208fd`，不包含后续日志超时回执更改；该轮 Android 设备任务在本次检查仍运行，因此不称整轮全部完成。三平台 APK 摘要各不相同，证据证明构建及诊断行为一致，不证明可复现的逐字节发行物；APK 本体未包含在这批归档，也没有安装/运行验收。产品化构建执行、有效配置与变体查询仍待实现。

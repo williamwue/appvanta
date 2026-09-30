@@ -48,6 +48,9 @@ jobs:
         run: |
           sdkmanager "platforms;android-35" "build-tools;35.0.0"
           node scripts/verify-gradle-project.mjs
+      - name: Verify Gradle Tooling API owner disconnect cancellation
+        timeout-minutes: 5
+        run: node scripts/verify-gradle-cancellation.mjs
       - name: Verify installed Python SDK
         timeout-minutes: 5
         run: |
