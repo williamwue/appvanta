@@ -235,6 +235,14 @@ jobs:
       - name: Verify interrupted Perfetto pull recovery
         timeout-minutes: 4
         run: node scripts/verify-network-capture-recovery.mjs emulator-5554 tcp-pull-trace-disconnect
+      - name: Verify controlled Perfetto sampling
+        timeout-minutes: 5
+        shell: bash
+        run: |
+          python -m venv "$RUNNER_TEMP/appvanta-perfetto"
+          "$RUNNER_TEMP/appvanta-perfetto/bin/python" -m pip install -r scripts/perfetto-requirements.txt
+          python scripts/build-segment-clock.py --fixture performance-probe
+          node scripts/verify-perfetto-sampling.mjs emulator-5554 "$RUNNER_TEMP/appvanta-perfetto/bin/python"
       - name: Verify sensor recovery after emulator shutdown
         timeout-minutes: 6
         run: node scripts/verify-shake-device-restart.mjs emulator-5554 appvanta-ci swiftshader_indirect

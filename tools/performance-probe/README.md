@@ -1,0 +1,9 @@
+# Controlled performance fixture
+
+This original, test-only Android application performs a fixed number of xorshift32 iterations from seed `0x12345678`. A persistent worker thread survives the warmups so Perfetto can record its identity. Each unique request writes an atomic private receipt with the iteration count, checksum, PID/TID, elapsed-realtime interval and thread CPU time. The host independently computes the checksum. There are no network or external-storage permissions; `debuggable` permits the verifier to read receipts with `run-as`.
+
+Build with `python scripts/build-segment-clock.py --fixture performance-probe`. Run `node scripts/verify-perfetto-sampling.mjs <device> <perfetto-python>` after building AppVanta. The verifier installs this fixture, stops only its package between cohorts, and removes its successful-run receipts after preserving them locally.
+
+Each of two cohorts performs two warmups and three measured samples. Samples use five million iterations, an eight-second capture and a fixed six-second analysis window. Host-written device trace markers enclose the workload request and receipt; the entire interval must be inside the analysis window. Scheduler rows must include the receipt's actual PID/TID. These measurements include application dispatch/rendering overhead in the window, not only the computation loop.
+
+The first cohort's median plus 25 percent forms an example baseline; the second independent cohort is compared without widening that threshold. A comparison failure is reported separately from successful collection. This demonstrates a reproducible protocol and preserves observed variation; it does not establish a universal performance threshold, stable results on every emulator, frequency-controlled execution or real-device performance. APK SHA-256 is part of the scenario identity.

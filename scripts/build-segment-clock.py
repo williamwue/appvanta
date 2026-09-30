@@ -9,7 +9,7 @@ parser = argparse.ArgumentParser()
 parser.add_argument('--sdk', default=os.environ.get('ANDROID_HOME') or os.environ.get('ANDROID_SDK_ROOT'))
 parser.add_argument('--build-tools', default='35.0.0')
 parser.add_argument('--platform', default='android-35')
-parser.add_argument('--fixture', choices=['segment-clock', 'sensor-probe', 'share-source', 'share-receiver', 'share-relay-probe', 'share-helper'], default='segment-clock')
+parser.add_argument('--fixture', choices=['segment-clock', 'sensor-probe', 'performance-probe', 'share-source', 'share-receiver', 'share-relay-probe', 'share-helper'], default='segment-clock')
 args = parser.parse_args()
 if not args.sdk:
     parser.error('--sdk or ANDROID_HOME is required')
