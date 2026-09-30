@@ -15,7 +15,33 @@ Flow、CLI `run-flow`、MCP `run_flow`/`execute_action` 和 Android Driver 支�
 
 URI 必须是带 authority/path 的 `content://`，最多 4096 字符，不接受 file/http、用户信息、端口、fragment、空白和控制字符。MIME 必须是明确的 type/subtype，不接受通配符。`packageName` 可省略，此时由 Android 解析接收者；显式目标包及 API 37 英文系统选择器已有验收。发送失败会使 Flow 停止，不执行下一步。启动成功只表示 Intent 已投递，仍须由接收应用检查点和实际内容证明业务成功。
 
-动作不上传本地文件、不创建 provider，也不删除 URI 所指文件。授权生命周期由 Android 与 URI 所属应用管理；若需要提前撤销，由来源应用执行。尚未实现 AppVanta 托管上传/回收、多附件、系统选择器完整验收、跨用户或真机/OEM 验收。
+动作不上传本地文件、不创建文件 provider，也不删除 URI 所指文件。授权生命周期由 Android 与 URI 所属应用管理；若需要提前撤销，由来源应用执行。尚未实现 AppVanta 托管上传/回收、系统选择器完整验收、跨用户或真机/OEM 验收。
+
+## 多附件
+
+`share-files` 使用独立原生 helper，将已有 URI 逐项准备后，以 `ACTION_SEND_MULTIPLE`、URI 列表和 ClipData 发送。调用方须先显式构建并安装 helper，产品不会自动安装 APK：
+
+```text
+python scripts/build-segment-clock.py --fixture share-helper
+adb -s emulator-5554 install -r .appvanta/share-helper/appvanta-share-helper.apk
+```
+
+```json
+{
+  "kind": "share-files",
+  "uris": ["content://example.files/document/a.pdf", "content://example.files/document/b.pdf"],
+  "mimeType": "application/pdf",
+  "packageName": "example.receiver"
+}
+```
+
+支持 2–16 个不同 URI，URI 与 MIME 校验沿用单附件规则；不指定包时由 Android 解析接收者。当前 helper 为非 debuggable、无网络权限的独立应用，Activity 和只读回执 provider 均要求 DUMP 权限。它不读取附件内容，也不持有文件上传功能。
+
+每次调用生成独立 operation。helper 持久保存 `prepared`、`dispatching`、`dispatched`、`cancelled` 或 `rejected` 回执；准备状态只在原 Activity 实例内继续，实例丢失后不能重新创建同一 operation。发送前落盘 `dispatching`，成功返回后才记录 `dispatched`。后者只证明启动调用成功，不证明接收应用实际读取或用户最终选择。
+
+宿主在运行的 artifacts 目录保存请求、观察到的回执、逐项准备回执及发送意图。请求与回执不匹配时停止；发送前失败会尝试取消准备。已尝试发送后响应丢失则保留不确定结果，不自动发送第二次。独立的新调用会生成新的 operation，因此再次手动执行仍可能重复交付，不能把这套记录视为跨调用的 exactly-once 保证。helper 回执保留在应用私有目录，可经 `adb exec-out content read --uri content://dev.appvanta.share.helper/operations/<operation>` 查询；尚无回执自动回收策略。
+
+多附件选择器、多 provider、数量边界、跨用户、真机/OEM 和宿主/Activity 各中断窗口仍需扩展验收。详见 [多附件机制与边界](multi-attachment-design.md)。
 
 平台依据：[Android 文件分享](https://developer.android.com/training/secure-file-sharing)、[URI 读取授权](https://developer.android.com/reference/androidx/core/content/FileProvider)、[provider 可见性声明](https://developer.android.com/training/package-visibility/declaring)。
 

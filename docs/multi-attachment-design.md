@@ -1,6 +1,6 @@
 # 多附件分享：原生权限转授验证
 
-状态：验证夹具已实现，产品 Action/Flow/MCP 多附件入口尚未实现。此文不把夹具成功计为完整附件功能交付。
+状态：验证夹具之外，已增加产品 share-helper、持久回执和 `share-files` Action/Flow/MCP 接入。以下早期夹具证据与后续产品验收分别记录，不把机制验证计为完整附件功能交付。产品使用方法见 file-sharing.md。
 
 Android 多附件使用 `ACTION_SEND_MULTIPLE` 和 `ArrayList<Uri>` 类型的 `EXTRA_STREAM`；显式 `ClipData` 携带每个 URI，并只请求读取授权。参考 [Android 分享数据](https://developer.android.com/training/sharing/send)。当前 API 37 设备的 `am help` 提供单个 `--eu` 与字符串列表 `--esal`，没有 URI Parcelable 列表参数，因此不能将多个 URI 字符串直接当作多附件投递。
 
@@ -16,9 +16,9 @@ API 37 证据：`.appvanta/runs/multi-share-probe-1790717202494/verification.jso
 
 ## 产品接入仍需完成
 
-- 明确多附件 Action 的 URI 列表、MIME 和接收者契约，与 CLI、Flow、SDK、MCP 同步验证。
-- 将固定测试桥接器替换为可安装、可诊断版本的产品 helper；验证一般 provider 可见性与授权，不放宽来源访问权限。
-- 用具名操作和可验证回执绑定准备、交付与拒绝；宿主、helper 或 Activity 中断后，不能自动重放可能已经交付的附件。
+- 产品 `share-files` 已定义 URI 列表、MIME 和可选接收者契约；完整客户端及更多调用入口仍待验收。
+- 产品 helper 已使用一般 content URI，仍需验证更多 provider 可见性与授权。
+- 具名操作与持久回执已实现，仍需补宿主、helper 与 Activity 的全部中断窗口；不能自动重放可能已经交付的附件。
 - 取消和失败时释放本次准备的授权；验证来源提前撤销、接收者缺失、重复或乱序请求，以及选择器取消。
 - 验证数量上限、多种 MIME、不同来源 provider、API 35、其他语言和 OEM。真机仍待设备可用。
 - 本地文件上传、托管 provider 与回收另需实现，当前只处理已有 content URI。
@@ -39,3 +39,5 @@ node scripts/verify-multi-share-probe.mjs emulator-5554
 后续恢复与复验：原 AppVanta_Verification_API37 AVD 重新启动后，核对系统指纹一致，按原 token 调用 recover-flow 返回 environment-cleanup；证据为原运行 recovery/b0e4d80a-3971-437e-8f7b-6dd4774eb503.json。仅删除旧运行具名测试文件，旧 progress.json 保持不变，未继续原业务流程。新运行 .appvanta/runs/file-share-1790726829703/verification.json 已通过 CLI、MCP、选择器取消不交付与再次选择交付，以及权限撤销、文件删除和租约释放，补齐共享夹具改动后的 API 37 单附件复验。
 
 来源撤销补充：API 37 运行 .appvanta/runs/multi-share-probe-1790727033098/verification.json 通过。第一项准备后，来源撤销该 URI 的只读授权但保留文件；接着准备第二项时，桥接应用在最终 startActivity 受到 Android SecurityException 拒绝，接收端没有 received.json。来源重新授予 shell 读取权限后，新 operation 的两项交付、摘要与只读检查通过。夹具增加具名文件的 revoke/grant 控制，不改变产品授权策略。
+
+产品验收：.appvanta/runs/share-helper-1790727695741/verification.json 在 API 37 通过 helper 持久回执、准备进程丢失后拒绝续接/重建、取消不交付，以及已交付 operation 重复请求拒绝；旧回执逐字节保持不变。同次真实 CLI run-flow 和 MCP run_flow 均用 share-files 完成双附件交付，接收应用核对两份不同内容的 4096 字节及摘要、URI 顺序和只读权限。源码构建和完整 261 项回归通过（core127、Android94、脚本40）。模拟发送响应丢失的宿主回归验证不重复 dispatch，不代表实际宿主在所有指令窗口强杀已验收。API 35 产品 helper 步骤已加入 CI，尚待对应修订结果。

@@ -47,6 +47,7 @@ export type Action =
   | { readonly kind: 'set-clipboard'; readonly text: string }
   | { readonly kind: 'share-text'; readonly text: string; readonly subject?: string; readonly packageName?: string }
   | { readonly kind: 'share-file'; readonly uri: string; readonly mimeType: string; readonly packageName?: string }
+  | { readonly kind: 'share-files'; readonly uris: readonly string[]; readonly mimeType: string; readonly packageName?: string }
   | { readonly kind: 'paste'; readonly target: Target }
   | { readonly kind: "swipe"; readonly from: Point; readonly to: Point; readonly durationMs: number }
   | { readonly kind: 'pinch'; readonly center: Point; readonly startSpan: number; readonly endSpan: number; readonly durationMs: number }

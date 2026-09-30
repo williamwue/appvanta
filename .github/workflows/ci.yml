@@ -189,6 +189,11 @@ jobs:
         run: |
           python scripts/build-segment-clock.py --fixture share-relay-probe
           node scripts/verify-multi-share-probe.mjs emulator-5554
+      - name: Verify product multi-attachment helper
+        timeout-minutes: 5
+        run: |
+          python scripts/build-segment-clock.py --fixture share-helper
+          node scripts/verify-share-helper.mjs emulator-5554
       - name: Verify application accelerometer callbacks
         timeout-minutes: 4
         run: |

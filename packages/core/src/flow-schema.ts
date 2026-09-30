@@ -131,6 +131,12 @@ export function parseAction(value: unknown): Action {
       if (Buffer.byteLength(a.text, 'utf8') > 24000 || a.text.includes('\0')) throw new Error('Clipboard text must be valid Unicode without NUL, at most 24000 UTF-8 bytes');
       return { kind: a.kind, text: a.text };
     case 'paste': keys(a, ['kind', 'target']); return { kind: a.kind, target: parseTarget(a.target) };
+    case 'share-files': {
+      keys(a, ['kind', 'uris', 'mimeType', 'packageName']);
+      if (!Array.isArray(a.uris) || a.uris.length < 2 || a.uris.length > 16 || new Set(a.uris).size !== a.uris.length) throw new Error('Share-files requires 2 to 16 distinct content URIs');
+      a.uris.forEach(uri => parseAction({ kind: 'share-file', uri, mimeType: a.mimeType, ...(a.packageName !== undefined ? { packageName: a.packageName } : {}) }));
+      return { kind: 'share-files', uris: a.uris as string[], mimeType: text(a.mimeType), ...(a.packageName !== undefined ? { packageName: packageName(a.packageName) } : {}) };
+    }
     case 'share-file': {
       keys(a, ['kind', 'uri', 'mimeType', 'packageName']);
       const uri = text(a.uri), mimeType = text(a.mimeType);
