@@ -73,6 +73,18 @@ jobs:
           APPVANTA_GRADLE_CANCEL_TASK: worker
           APPVANTA_GRADLE_CANCEL_TRIGGER: owner-kill
         run: node scripts/verify-gradle-cancellation.mjs
+      - name: Verify Gradle successful completion and project release
+        timeout-minutes: 5
+        env:
+          APPVANTA_GRADLE_CANCEL_TASK: success
+          APPVANTA_GRADLE_CANCEL_TRIGGER: complete
+        run: node scripts/verify-gradle-cancellation.mjs
+      - name: Verify Gradle task failure and project release
+        timeout-minutes: 5
+        env:
+          APPVANTA_GRADLE_CANCEL_TASK: failure
+          APPVANTA_GRADLE_CANCEL_TRIGGER: complete
+        run: node scripts/verify-gradle-cancellation.mjs
       - name: Verify installed Python SDK
         timeout-minutes: 5
         run: |

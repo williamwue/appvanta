@@ -33,6 +33,12 @@ Bridge 强制终止：Windows `gradle-cancellation-1790750594684` 在 Worker 285
 
 ## 下一实现单元与验收门槛
 
+占用模块首轮 CI `36681342452` 在 macOS/Windows 的测试断言失败：实际 owner 路径正确规范化成 `/private/var/...` 和 `runneradmin`，测试却分别期待 `/var/...` 和 `RUNNER~1`。本地显式 junction 复现相同错误；修正为比较 realpath 后六项测试通过，并让六个竞争进程交替使用真实路径与别名，仍要求唯一持有者。产品路径规范化未放宽；修正的托管结果待新快照验证。
+
+托管原型结果：公开快照 `e42b38f` 的 CI `36680846741` 已核验 Linux/macOS 两份归档，共 362 个文件通过大小/SHA-256 校验。每个平台均通过等待任务、JavaExec、Worker EOF 取消，以及 bridge 强杀和父 Node 强杀五种场景。父 Node 强杀后分别在 554/1866 ms 得到 BuildCancelledException 回执，专属 stop 后 daemon/Worker 均退出。此快照早于项目占用模块；Windows 完整任务及 Android 仍按各自状态单独验收，不将两个主机平台成功写成整轮通过。
+
+正常终态原型：Windows `gradle-cancellation-1790751843863` 通过执行握手释放真实任务，核对成功产物及 passed 回执；`1790751851885` 通过同一握手使任务抛出明确的预期异常，核对 failed/BuildException 及错误标记。二者均没有发起取消，确认专属 daemon 退出后，内部占用模块分别记录 succeeded/failed 并归档释放。Worker EOF 回归 `1790751867463` 同时通过。新增 success/failure 模式必须配合 complete 触发器，三系统 CI 已加入两条路径，结果待验证；此握手没有模拟完成与取消同时发生的竞争。
+
 项目占用的首个内部实现位于 `packages/android/src/build-ownership.ts`，尚未作为公共 SDK 导出。以项目真实路径下 `.appvanta/android-build/active` 的排他目录创建获得占用；owner/outcome 回执使用排他写入并同步文件。已存在但内容不完整的目录同样拒绝新构建，不根据 PID 消失删除锁。终态明确且 supervisor 确认清理后，将整个 active 目录重命名到唯一 runs 目录；未知执行或清理未确认时保留 active。该实现依赖协作进程不自行替换状态目录，不提供恶意并发文件系统修改防护或断电持久性保证；显式恢复入口仍待实现。
 
 吞吐与实现边界：同一项目只有一个写入者，不同项目目录独立。锁记录是共享可变状态；本单元由根执行者串行修改、构建和验证。托管结果不阻塞本地开发，产品构建 API 的开放仍取决于生命周期和恢复验收。六项测试覆盖六个独立 Node 进程竞争、持有进程退出、路径别名、状态目录链接、部分写入/记录损坏、终结竞争、回执写入失败及其他项目仍可运行。

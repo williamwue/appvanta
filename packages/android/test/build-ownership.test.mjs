@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtemp, mkdir, readFile, rm, symlink, writeFile } from 'node:fs/promises';
+import { mkdtemp, mkdir, readFile, realpath, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { execFile } from 'node:child_process';
@@ -14,16 +14,20 @@ async function fixture(t) {
 }
 
 test('independent processes compete for one persistent project ownership', async t => {
-  const root = await fixture(t);
+  const base = await fixture(t);
+  const project = join(base, 'project');
+  await mkdir(project);
+  const root = join(base, 'alias');
+  await symlink(project, root, process.platform === 'win32' ? 'junction' : 'dir');
   const url = new URL('../dist/build-ownership.js', import.meta.url).href;
   const code = `import { acquireBuildProject } from ${JSON.stringify(url)};
     try { const handle = await acquireBuildProject(process.argv[1]); console.log(JSON.stringify(handle.owner)); }
     catch (error) { if (error.code !== 'BUILD_PROJECT_BUSY') throw error; console.log('busy'); }`;
-  const results = await Promise.all(Array.from({ length: 6 }, () => promisify(execFile)(process.execPath,
-    ['--input-type=module', '-e', code, root], { timeout: 15000 })));
+  const results = await Promise.all(Array.from({ length: 6 }, (_, index) => promisify(execFile)(process.execPath,
+    ['--input-type=module', '-e', code, index % 2 ? root : project], { timeout: 15000 })));
   assert.equal(results.filter(result => result.stdout.trim() === 'busy').length, 5);
   const winner = JSON.parse(results.find(result => result.stdout.trim() !== 'busy').stdout);
-  assert.equal(winner.projectDirectory, root);
+  assert.equal(winner.projectDirectory, await realpath(root));
   await assert.rejects(acquireBuildProject(root), { code: 'BUILD_PROJECT_BUSY' });
 });
 

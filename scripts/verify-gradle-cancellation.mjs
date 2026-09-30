@@ -12,9 +12,10 @@ import { acquireBuildProject } from '../packages/android/dist/build-ownership.js
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const installation = resolveGradleInstallation(process.argv[2]);
 const mode = process.env.APPVANTA_GRADLE_CANCEL_TASK ?? 'wait';
-if (!['wait', 'javaexec', 'worker'].includes(mode)) throw new Error('APPVANTA_GRADLE_CANCEL_TASK must be wait, javaexec or worker');
+if (!['wait', 'javaexec', 'worker', 'success', 'failure'].includes(mode)) throw new Error('Invalid APPVANTA_GRADLE_CANCEL_TASK');
 const trigger = process.env.APPVANTA_GRADLE_CANCEL_TRIGGER ?? 'eof';
-if (!['eof', 'bridge-kill', 'owner-kill'].includes(trigger)) throw new Error('APPVANTA_GRADLE_CANCEL_TRIGGER must be eof, bridge-kill or owner-kill');
+if (!['eof', 'bridge-kill', 'owner-kill', 'complete'].includes(trigger)) throw new Error('Invalid APPVANTA_GRADLE_CANCEL_TRIGGER');
+if (['success', 'failure'].includes(mode) !== (trigger === 'complete')) throw new Error('success/failure tasks require the complete trigger');
 if (!process.env.JAVA_HOME) throw new Error('JAVA_HOME is required');
 const java = join(process.env.JAVA_HOME, 'bin', process.platform === 'win32' ? 'java.exe' : 'java');
 const javac = join(process.env.JAVA_HOME, 'bin', process.platform === 'win32' ? 'javac.exe' : 'javac');
@@ -63,11 +64,23 @@ abstract class ProbeTask extends DefaultTask {
     }
 }
 tasks.register('isolatedWorker', ProbeTask)
+tasks.register('controlledCompletion') {
+    doLast {
+        file('executing.json').text = groovy.json.JsonOutput.toJson([pid: ProcessHandle.current().pid(), phase: 'executing', userHome: gradle.gradleUserHomeDir.absolutePath])
+        def deadline = System.nanoTime() + 60000000000L
+        while (!file('complete.signal').exists()) {
+            if (System.nanoTime() > deadline) throw new GradleException('Completion handshake timed out')
+            Thread.sleep(25)
+        }
+        if (file('complete.signal').text == 'failure') throw new GradleException('APPVANTA_EXPECTED_TASK_FAILURE')
+        file('task-result.txt').text = 'APPVANTA_EXPECTED_TASK_SUCCESS'
+    }
+}
 `);
 const classpath = join(installation.home, 'lib', '*');
 await promisify(execFile)(javac, ['-classpath', classpath, '-d', classes, join(root, 'scripts/fixtures/GradleCancellationProbe.java'), join(root, 'scripts/fixtures/GradleExecChild.java')], { windowsHide: true, timeout: 30000 });
 const receipt = join(evidence, 'bridge.json');
-const taskName = { wait: 'waitForCancellation', javaexec: 'childProcess', worker: 'isolatedWorker' }[mode];
+const taskName = { wait: 'waitForCancellation', javaexec: 'childProcess', worker: 'isolatedWorker', success: 'controlledCompletion', failure: 'controlledCompletion' }[mode];
 const bridgeArgs = ['-classpath', classes + delimiter + classpath, 'GradleCancellationProbe', installation.home, project, userHome, receipt, taskName];
 const ownershipPath = join(evidence, 'owner.json');
 const projectOwnership = await acquireBuildProject(project);
@@ -113,7 +126,7 @@ try {
   }, 120000, 'actual Gradle task execution');
   assert(alive(report.task.pid));
   assert.equal(await realpath(report.task.userHome), await realpath(userHome));
-  if (mode !== 'wait') {
+  if (['javaexec', 'worker'].includes(mode)) {
     report.worker = await wait(async () => {
       assert(!exited(), `Bridge exited before ${mode} child; inspect ${join(evidence, 'stderr.log')}`);
       try { return JSON.parse(await readFile(join(project, 'child.json'), 'utf8')); }
@@ -126,7 +139,19 @@ try {
   }
   await writeFile(join(evidence, 'before-interruption.json'), JSON.stringify(report, null, 2), { flag: 'wx' });
   const start = Date.now();
-  if (trigger !== 'bridge-kill') {
+  if (trigger === 'complete') {
+    await writeFile(join(project, 'complete.signal'), mode, { flag: 'wx' });
+    await wait(exited, 20000, 'Tooling API terminal result');
+    assert.equal(child.exitCode, 0);
+    report.completionMs = Date.now() - start;
+    report.bridge = JSON.parse(await readFile(receipt, 'utf8'));
+    assert.equal(report.bridge.status, mode === 'success' ? 'passed' : 'failed');
+    assert.equal(report.bridge.cancellationRequested, false);
+    assert.equal(report.bridge.failureClass, mode === 'success' ? '' : 'org.gradle.tooling.BuildException');
+    if (mode === 'success') assert.equal(await readFile(join(project, 'task-result.txt'), 'utf8'), 'APPVANTA_EXPECTED_TASK_SUCCESS');
+    else assert.match(stderr, /APPVANTA_EXPECTED_TASK_FAILURE/);
+    report.daemonAliveAfterCompletion = alive(report.task.pid);
+  } else if (trigger !== 'bridge-kill') {
     if (trigger === 'owner-kill') {
       assert(child.kill('SIGKILL'), 'Owned Node force termination was not delivered');
       await wait(exited, 10000, 'Node owner exit');
@@ -195,7 +220,7 @@ try {
   await writeFile(join(evidence, 'stderr.log'), stderr);
   try {
     report.projectOwnership = await projectOwnership.finish({
-      execution: report.status === 'passed' && report.bridge?.status === 'cancelled' ? 'cancelled' : 'unknown',
+      execution: report.status === 'passed' ? ({ passed: 'succeeded', failed: 'failed', cancelled: 'cancelled' }[report.bridge?.status] ?? 'unknown') : 'unknown',
       cleanup: report.daemonExited && (!report.worker || report.workerExitedAfterStop) ? 'verified' : 'unverified',
     });
     await writeFile(join(evidence, 'project-outcome.json'), await readFile(join(report.projectOwnership.recordDirectory, 'outcome.json')));
