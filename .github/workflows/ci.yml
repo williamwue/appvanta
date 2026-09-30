@@ -155,11 +155,12 @@ jobs:
           timeout 15s "$adb" shell settings put global animator_duration_scale 0
           "$adb" devices -l
       - name: Verify AVD startup wait cancellation
-        timeout-minutes: 2
+        timeout-minutes: 5
         run: |
           node scripts/verify-avd-cancellation.mjs appvanta-ci emulator-5554 sdk
           node scripts/verify-avd-cancellation.mjs appvanta-ci emulator-5554 mcp
           node scripts/verify-avd-cancellation.mjs appvanta-ci emulator-5554 cli
+          node scripts/verify-avd-cancellation.mjs appvanta-ci emulator-5554 mcp new swiftshader
       - name: Download pinned Markor APK
         shell: bash
         run: |
