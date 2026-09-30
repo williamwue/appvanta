@@ -33,6 +33,10 @@ Bridge 强制终止：Windows `gradle-cancellation-1790750594684` 在 Worker 285
 
 ## 下一实现单元与验收门槛
 
+UTF-8 文件修正后的 CI `36683185932` 仍在 Windows 参数往返失败，说明前述写文件修正没有覆盖整个传输链。本地 JDK 17.0.20.1 直接 argv 诊断把 `中文🚀` 的码点 `4e2d,6587,1f680` 读成 `4e2d,6587,3f,3f`；因此参数不能依赖 Java 启动器的本地编码。新的内部 `build-request.ts` 生成版本标记、字段数和长度前缀的 UTF-8 请求文件，启动器只接收 Base64 编码的请求路径。Java 端严格解码并拒绝损坏 UTF-8、截断、尾部多余内容、非法版本和超过边界的输入；每字段最大 1 MiB、总请求最大 4 MiB。任务、路径和参数不再直接通过非 ASCII argv 传递，请求文件仍应按运行日志同等敏感程度保存。
+
+Windows/JDK 17 的 `gradle-cancellation-1790753501158` 完成两任务及中文、emoji、换行、特殊字符参数原样往返，并验证截断/版本/UTF-8 三类损坏请求在执行前失败、已有回执不变。`gradle-supervisor-1790753534951` 通过实际任务执行后的监督取消与专属 daemon 清理。此前直接 argv 的调用协议已被该文件协议替代；新增两项请求编码边界测试及完整回归通过，跨平台修正待新 CI。只读 daemon 身份复核、显式恢复与公共执行 API 仍未完成。
+
 包内 bridge 现在生成排他的受管理 init script，并在 Gradle 配置求值前写 `bridge.json.daemons/<pid>.json`。记录包含本次随机 invocation、PID、进程启动时间及 Gradle 实际用户目录；用户目录与请求的规范路径不符时拒绝继续。同一进程重复应用 init script 只能接受完全相同的身份记录，不覆盖旧记录。路径以 UTF-8/Base64 嵌入生成脚本，最终 bridge 回执携带同一 invocation。启动时间是恢复核验的输入，当前尚未实现据此判断 PID 复用或自动恢复的入口。
 
 Windows `gradle-supervisor-1790753003368` 已用运行时身份记录代替测试任务自报 PID，通过实际执行后的取消和清理。`1790753065621` 在 settings.gradle 配置阶段主动抛出预期错误，确认任务体从未执行，却已记录 daemon 29336 及启动时间；BuildException 回执与身份 invocation 一致，专属 stop 后确认退出并释放占用。`gradle-cancellation-1790753072771` 成功回归及 `1790753100658` bridge 强杀回归通过；后者无最终回执但身份文件保留、占用不释放。四包打包/安装字节一致性验收通过；配置失败场景加入三系统 CI，托管结果待确认。

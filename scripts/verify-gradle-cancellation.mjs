@@ -9,6 +9,7 @@ import { resolveGradleInstallation } from './gradle-installation.mjs';
 import { runBuildProcess } from '../packages/android/dist/build-process.js';
 import { createHash } from 'node:crypto';
 import { acquireBuildProject } from '../packages/android/dist/build-ownership.js';
+import { writeGradleBridgeRequest } from '../packages/android/dist/build-request.js';
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const installation = resolveGradleInstallation(process.argv[2]);
@@ -88,8 +89,10 @@ await promisify(execFile)(javac, ['-classpath', classpath, '-d', classes, bridge
 const receipt = join(evidence, 'bridge.json');
 const taskName = { wait: 'waitForCancellation', javaexec: 'childProcess', worker: 'isolatedWorker', success: 'controlledCompletion', failure: 'controlledCompletion' }[mode];
 const tasks = mode === 'success' ? [taskName, 'verifyArguments'] : [taskName];
-const propertyValue = 'space 中文 ; & = literal';
-const bridgeArgs = ['-classpath', classes + delimiter + classpath, 'GradleBuildBridge', installation.home, project, userHome, receipt, String(tasks.length), ...tasks, '--offline', '--console=plain', '--max-workers=1', `-PbridgeValue=${propertyValue}`];
+const propertyValue = 'space 中文 ; & = literal 🚀\nnext line';
+const request = await writeGradleBridgeRequest(join(evidence, 'bridge.request'), { installation: installation.home, project, userHome, receipt,
+  tasks, arguments: ['--offline', '--console=plain', '--max-workers=1', `-PbridgeValue=${propertyValue}`] });
+const bridgeArgs = ['-classpath', classes + delimiter + classpath, 'GradleBuildBridge', ...request.launcherArguments];
 const ownershipPath = join(evidence, 'owner.json');
 const projectOwnership = await acquireBuildProject(project);
 await assert.rejects(acquireBuildProject(project), { code: 'BUILD_PROJECT_BUSY' });
@@ -101,7 +104,7 @@ child.stdout.on('data', chunk => { stdout += chunk; });
 child.stderr.on('data', chunk => { stderr += chunk; });
 child.on('error', error => { spawnError = error; });
 const exited = () => child.exitCode !== null || child.signalCode !== null;
-const report = { status: 'running', mode, trigger, evidence, project, userHome, installation, bridgeSourceSha256, projectOwner: projectOwnership.owner, ...(trigger === 'owner-kill' ? { ownerPid: child.pid } : { bridgePid: child.pid }) };
+const report = { status: 'running', mode, trigger, evidence, project, userHome, installation, bridgeSourceSha256, requestSha256: request.requestSha256, projectOwner: projectOwnership.owner, ...(trigger === 'owner-kill' ? { ownerPid: child.pid } : { bridgePid: child.pid }) };
 const wait = async (test, ms, description) => {
   const deadline = Date.now() + ms;
   do {
@@ -232,6 +235,28 @@ try {
     assert.equal(await readFile(receipt, 'utf8'), original);
     assert.equal(alive(report.task.pid), false);
     report.repeatedReceiptRejected = true;
+    const valid = await readFile(request.requestPath);
+    const malformed = [
+      { name: 'truncated', bytes: valid.subarray(0, valid.length - 1), error: /EOFException/ },
+      { name: 'version', bytes: Buffer.from(valid), error: /Unsupported request version/ },
+      { name: 'utf8', bytes: Buffer.from(valid), error: /MalformedInputException/ },
+    ];
+    malformed[1].bytes.writeUInt32BE(0, 0);
+    malformed[2].bytes[valid.length - 1] = 0xff;
+    report.invalidRequests = [];
+    for (const invalid of malformed) {
+      const path = join(evidence, `invalid-${invalid.name}.request`);
+      await writeFile(path, invalid.bytes, { flag: 'wx' });
+      const rejected = await runBuildProcess({ file: java,
+        args: [...bridgeArgs.slice(0, -2), '--request-base64', Buffer.from(path, 'utf8').toString('base64')],
+        cwd: root, logPath: join(evidence, `invalid-${invalid.name}.log`), timeoutMs: 30000 });
+      assert.equal(rejected.status, 'exited'); assert.notEqual(rejected.exitCode, 0);
+      assert.equal(rejected.interruption, null);
+      assert.match(await readFile(rejected.logPath, 'utf8'), invalid.error);
+      assert.equal(await readFile(receipt, 'utf8'), original);
+      assert.equal(alive(report.task.pid), false);
+      report.invalidRequests.push(invalid.name);
+    }
   }
   if (report.worker) {
     await wait(() => !alive(report.worker.pid), 10000, `${mode} child exit after daemon stop`);

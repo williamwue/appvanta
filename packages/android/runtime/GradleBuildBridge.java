@@ -1,7 +1,9 @@
 import java.io.File;
+import java.io.DataInputStream;
 import java.nio.ByteBuffer;
 import java.nio.channels.FileChannel;
 import java.nio.charset.StandardCharsets;
+import java.nio.charset.CodingErrorAction;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.StandardOpenOption;
@@ -14,10 +16,38 @@ import org.gradle.tooling.GradleConnector;
 import org.gradle.tooling.ProjectConnection;
 
 public final class GradleBuildBridge {
+    private static String utf8(byte[] bytes) throws Exception {
+        return StandardCharsets.UTF_8.newDecoder().onMalformedInput(CodingErrorAction.REPORT)
+            .onUnmappableCharacter(CodingErrorAction.REPORT).decode(ByteBuffer.wrap(bytes)).toString();
+    }
+
+    private static String[] request(String[] launch) throws Exception {
+        if (launch.length != 2 || !launch[0].equals("--request-base64")) throw new IllegalArgumentException("Encoded request path required");
+        Path path = Path.of(utf8(Base64.getDecoder().decode(launch[1])));
+        if (Files.size(path) > 4 * 1024 * 1024) throw new IllegalArgumentException("Request exceeds 4 MiB");
+        try (DataInputStream input = new DataInputStream(Files.newInputStream(path))) {
+            if (input.readInt() != 0x41564731) throw new IllegalArgumentException("Unsupported request version");
+            int count = input.readInt();
+            if (count < 6 || count > 1285) throw new IllegalArgumentException("Invalid request field count");
+            String[] values = new String[count];
+            long total = 8;
+            for (int i = 0; i < count; i++) {
+                int length = input.readInt(); total += 4L + length;
+                if (length < 0 || length > 1024 * 1024 || total > 4 * 1024 * 1024) throw new IllegalArgumentException("Invalid request field size");
+                byte[] bytes = new byte[length]; input.readFully(bytes); values[i] = utf8(bytes);
+                if (values[i].indexOf(0) >= 0) throw new IllegalArgumentException("Invalid request string");
+            }
+            if (input.read() != -1) throw new IllegalArgumentException("Trailing request bytes");
+            return values;
+        }
+    }
+
     public static void main(String[] args) throws Exception {
+        args = request(args);
         if (args.length < 6) throw new IllegalArgumentException("installation project user-home receipt task-count tasks... arguments...");
         int taskCount = Integer.parseInt(args[4]);
-        if (taskCount < 1 || taskCount > args.length - 5) throw new IllegalArgumentException("Invalid task count");
+        if (taskCount < 1 || taskCount > 256 || taskCount > args.length - 5 || args.length - 5 - taskCount > 1024) throw new IllegalArgumentException("Invalid task or argument count");
+        for (int i = 0; i < 4; i++) if (!Path.of(args[i]).isAbsolute()) throw new IllegalArgumentException("Absolute request paths required");
         String[] tasks = Arrays.copyOfRange(args, 5, 5 + taskCount);
         for (String task : tasks) if (task.isBlank() || task.startsWith("-")) throw new IllegalArgumentException("Invalid task name");
         String[] arguments = Arrays.copyOfRange(args, 5 + taskCount, args.length);

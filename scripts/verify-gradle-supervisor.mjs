@@ -5,6 +5,7 @@ import { fileURLToPath } from 'node:url';
 import { setTimeout as delay } from 'node:timers/promises';
 import { acquireBuildProject } from '../packages/android/dist/build-ownership.js';
 import { runBuildProcess } from '../packages/android/dist/build-process.js';
+import { writeGradleBridgeRequest } from '../packages/android/dist/build-request.js';
 import { resolveGradleInstallation } from './gradle-installation.mjs';
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
@@ -37,8 +38,11 @@ const ownership = await acquireBuildProject(project);
 const controller = new AbortController();
 const report = { status: 'running', mode, project, userHome, installation, owner: ownership.owner };
 const receipt = join(evidence, 'bridge.json');
+const request = await writeGradleBridgeRequest(join(evidence, 'bridge.request'), { installation: installation.home, project, userHome, receipt,
+  tasks: ['waitForOwner'], arguments: ['--offline', '--console=plain', '--max-workers=1'] });
+report.requestSha256 = request.requestSha256;
 const execution = runBuildProcess({ file: binary('java'), args: ['-classpath', classes + delimiter + classpath,
-  'GradleBuildBridge', installation.home, project, userHome, receipt, '1', 'waitForOwner', '--offline', '--console=plain', '--max-workers=1'],
+  'GradleBuildBridge', ...request.launcherArguments],
   cwd: project, logPath: join(evidence, 'build.log'), timeoutMs: 150000, cancellationGraceMs: 20000, signal: controller.signal });
 let terminal;
 void execution.then(result => { terminal = result; }, error => { terminal = { error: String(error) }; });
