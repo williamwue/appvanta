@@ -94,6 +94,7 @@ const validators = new Map(tools.map(tool => [tool.name, ajv.compile(tool.inputS
 const handleProtocolLine = protocolSession(tools, callTool);
 
 const input = createInterface({ input: process.stdin });
+input.once('close', () => handleProtocolLine.close());
 input.on("line", (line) => {
   void handleLine(line).catch(error => process.stderr.write(`Protocol output failed: ${String(error)}\n`));
 });

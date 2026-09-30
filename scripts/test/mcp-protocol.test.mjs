@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { spawnSync } from 'node:child_process';
+import { mcpExchange } from './helpers/mcp-exchange.mjs';
 import { protocolSession, ParameterError } from '../../packages/mcp/dist/protocol.js';
 
 const init = { jsonrpc: '2.0', id: 'init', method: 'initialize', params: { protocolVersion: '2099-01-01', capabilities: {}, clientInfo: { name: 'test', version: '1' } } };
@@ -34,17 +34,37 @@ test('MCP initialization, notification silence and error categories preserve req
   assert.equal(calls, count);
 });
 
-test('stdio survives malformed input and returns tool execution errors as content', () => {
+test('stdio survives malformed input and returns tool execution errors as content', async () => {
   const lines = ['{bad', JSON.stringify(init), JSON.stringify({ jsonrpc: '2.0', method: 'notifications/initialized' }),
     JSON.stringify({ jsonrpc: '2.0', id: 'tool', method: 'tools/call', params: { name: 'record_flow', arguments: { runDirectory: 'appvanta-nonexistent-protocol-fixture' } } }),
     JSON.stringify({ jsonrpc: '2.0', id: 'ping', method: 'ping' })];
-  const result = spawnSync(process.execPath, ['packages/mcp/dist/index.js'], { input: lines.join('\n') + '\n', encoding: 'utf8', timeout: 30000 });
+  const result = await mcpExchange(lines, [null, 'init', 'tool', 'ping']);
   assert.equal(result.status, 0, result.stderr);
   const responses = result.stdout.trim().split('\n').map(JSON.parse);
   assert.equal(responses.length, 4);
   assert.equal(responses[0].error.code, -32700);
   assert.equal(responses.find(item => item.id === 'tool').result.isError, true);
   assert.deepEqual(responses.find(item => item.id === 'ping'), { jsonrpc: '2.0', id: 'ping', result: {} });
+});
+
+test('closing input cancels all in-flight calls and rejects further dispatch', async () => {
+  const signals = [];
+  const handle = protocolSession([], async (_, args, signal) => {
+    signals.push(signal);
+    if (args.completed) return { taskId: 'already-started' };
+    await new Promise((_, reject) => signal.addEventListener('abort', () => reject(signal.reason), { once: true }));
+  });
+  await handle(JSON.stringify(init));
+  await handle(JSON.stringify({ jsonrpc: '2.0', method: 'notifications/initialized' }));
+  const request = (id, args = {}) => handle(JSON.stringify({ jsonrpc: '2.0', id, method: 'tools/call', params: { name: 'fixture', arguments: args } }));
+  await request(1, { completed: true });
+  const pending = [request(2), request(3)];
+  handle.close(); handle.close();
+  assert.deepEqual(await Promise.all(pending), [undefined, undefined]);
+  assert.equal(signals[0].aborted, false, 'Completed independent work is no longer request-owned');
+  assert(signals.slice(1).every(signal => signal.aborted && signal.reason.message === 'MCP input closed'));
+  assert.equal((await request(4)).error.code, -32000);
+  assert.equal(signals.length, 3);
 });
 
 test('in-flight cancellation is responsive, type-sensitive and suppresses the cancelled response', async () => {

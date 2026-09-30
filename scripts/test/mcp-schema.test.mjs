@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { spawnSync } from 'node:child_process';
+import { mcpExchange } from './helpers/mcp-exchange.mjs';
 import { mkdtemp, readdir, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -75,7 +75,7 @@ test('MCP publishes executable schemas and rejects invalid calls before acquirin
       ['list_devices', null], ['list_devices', []], ['record_flow', {}],
     ];
     const requests = [{ jsonrpc: '2.0', id: 1, method: 'tools/list' }, ...cases.map(([name, args], i) => ({ jsonrpc: '2.0', id: i + 2, method: 'tools/call', params: { name, arguments: args } }))];
-    const result = spawnSync(process.execPath, ['packages/mcp/dist/index.js'], { input: [{ jsonrpc: '2.0', id: 'init', method: 'initialize', params: { protocolVersion: '2024-11-05', capabilities: {}, clientInfo: { name: 'test', version: '1' } } }, { jsonrpc: '2.0', method: 'notifications/initialized' }, ...requests].map(JSON.stringify).join('\n') + '\n', encoding: 'utf8', timeout: 30000, env: { ...process.env, APPVANTA_LOCK_DIRECTORY: root, PATH: '' }, maxBuffer: 2 * 1024 * 1024 });
+    const result = await mcpExchange([{ jsonrpc: '2.0', id: 'init', method: 'initialize', params: { protocolVersion: '2024-11-05', capabilities: {}, clientInfo: { name: 'test', version: '1' } } }, { jsonrpc: '2.0', method: 'notifications/initialized' }, ...requests].map(JSON.stringify), ['init', ...requests.map(request => request.id)], { ...process.env, APPVANTA_LOCK_DIRECTORY: root, PATH: '' });
     assert.equal(result.status, 0, result.stderr);
     const responses = result.stdout.trim().split('\n').map(JSON.parse).filter(item => item.id !== 'init');
     assert.equal(responses.length, requests.length);

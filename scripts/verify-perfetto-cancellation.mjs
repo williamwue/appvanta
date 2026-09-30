@@ -77,7 +77,7 @@ async function awaitProcessor(before, finished) {
   throw new Error('Processor startup checkpoint timed out');
 }
 const results = [];
-for (const client of ['sdk', 'mcp', 'cli', 'owner-kill']) {
+for (const client of ['sdk', 'mcp', 'mcp-eof', 'cli', 'owner-kill']) {
   const before = new Set(await readdir('.appvanta/runs'));
   let child, exited, active, completed = false, rpcOutput = '';
   const controller = new AbortController();
@@ -86,9 +86,10 @@ for (const client of ['sdk', 'mcp', 'cli', 'owner-kill']) {
     let pending;
     if (client === 'sdk') {
       pending = analyzePerfetto({ ...options, trace: large, signal: controller.signal }).then(value => ({ value }), error => ({ error: String(error) })).finally(() => { completed = true; });
-    } else if (client === 'mcp') {
+    } else if (client === 'mcp' || client === 'mcp-eof') {
       child = spawn(process.execPath, ['packages/mcp/dist/index.js'], { windowsHide: true, stdio: ['pipe', 'pipe', 'pipe'] });
       exited = once(child, 'exit'); child.stderr.resume(); child.stdout.on('data', data => { rpcOutput += data; });
+      pending = exited.then(([code, signal]) => ({ code, signal })).finally(() => { completed = true; });
       const initialized = readMcpResponses(child.stdout, [1]);
       child.stdin.write(JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'initialize', params: { protocolVersion: '2024-11-05', capabilities: {}, clientInfo: { name: 'perfetto-cancel-verifier', version: '1' } } }) + '\n'); await initialized;
       child.stdin.write(JSON.stringify({ jsonrpc: '2.0', method: 'notifications/initialized' }) + '\n');
@@ -111,12 +112,14 @@ for (const client of ['sdk', 'mcp', 'cli', 'owner-kill']) {
     const started = Date.now();
     if (client === 'sdk') controller.abort(new Error('Verifier cancelled active analysis'));
     else if (client === 'mcp') child.stdin.write(JSON.stringify({ jsonrpc: '2.0', method: 'notifications/cancelled', params: { requestId: 2, reason: 'Verifier cancelled active analysis' } }) + '\n');
+    else if (client === 'mcp-eof') child.stdin.end();
     else if (client === 'owner-kill') assert(child.kill('SIGKILL'), 'SDK owner must still be live when terminated');
     else if (process.platform === 'win32') await writeFile(consoleRequest, 'cancel', { flag: 'wx' });
     else child.kill('SIGINT');
     const response = client === 'mcp' ? { cancelledResponseSuppressed: true } : await pending;
     if (client === 'sdk') assert.match(response.error, /cancellation requested/);
     if (client === 'cli') { assert.equal(response.code, 1); assert.match(response.stderr, /cancellation requested/); }
+    if (client === 'mcp-eof') { assert.equal(response.code, 0); assert.equal(response.signal, null); }
     if (client === 'cli' && process.platform === 'win32') {
       const consoleEvidence = JSON.parse(await readFile(`${consoleRequest}.json`, 'utf8'));
       assert.equal(consoleEvidence.sent, true); assert.equal(consoleEvidence.exited, true);
@@ -151,6 +154,11 @@ for (const client of ['sdk', 'mcp', 'cli', 'owner-kill']) {
       assert.equal(analysis.cancellation.processorExited, true); assert.equal(analysis.cancellation.cleanupError, null);
     }
     assert.equal(alive(active.processor.pid), false); assert.equal(alive(active.processor.analysisPid), false);
+    if (client === 'mcp-eof') {
+      assert(Date.now() - started < 5000, 'MCP stdin EOF cleanup exceeded five seconds');
+      assert.equal(analysis.cancellation.ownerDisconnected, false, 'MCP must cancel the request before its own process exits');
+      assert(!rpcOutput.trim().split('\n').map(JSON.parse).some(message => message.id === 2));
+    }
     await assert.rejects(access(join(active.directory, 'metrics.json')));
     await assert.rejects(access(join(active.directory, 'report.md')));
     if (client === 'mcp') {

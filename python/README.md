@@ -47,10 +47,31 @@ workers, so this package supplies its own transport to the official MCP client.
 This is not a guarantee that arbitrary descendants survive an external host
 process-tree kill or a containing operating-system Job Object.
 
+The Node server cancels still-active request controllers when its stdin reaches
+EOF. Wait for responses before closing stdin if you need their results; sending
+all requests and immediately closing the stream requests shutdown. Completed
+`start_flow` calls have already transferred work to independent workers, so
+closing the connection does not cancel those tasks. Cleanup completion still
+requires the corresponding task, lease or analysis evidence.
+
 This initial SDK is not a stable API promise. Cross-platform installation,
 real-device/OEM behavior, cancellation and disconnect combinations require their
 own acceptance evidence. It reuses the official [MCP Python client](https://py.sdk.modelcontextprotocol.io/client/)
 with `mcp==2.2.0`, using the legacy handshake supported by this AppVanta server.
+
+Hosted installation evidence: public `99489ef`, run
+[36673361082](https://github.com/williamwue/appvanta/actions/runs/36673361082), passed
+all three host build jobs. Each host installed the wheel and completed the actual
+Node server handshake, discovery of 60 tools, a missing-task error and a subsequent
+successful tool listing. The 94-file evidence archive from each host was independently
+verified for size and SHA-256 (282 files total). These host jobs do not exercise
+Android actions; the device job and later trace-analysis jobs have separate gates.
+
+| Host | Python SDK evidence |
+|---|---|
+| Windows | `python-sdk-1790746069101308600` |
+| Linux | `python-sdk-1790746000590991789` |
+| macOS | `python-sdk-1790746017639377000` |
 
 Request-cancellation verifier: `scripts/verify-python-cancellation.py --trace
 <retained-performance-probe-trace> --python <perfetto-python>` first analyzes the

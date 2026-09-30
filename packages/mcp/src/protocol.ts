@@ -7,8 +7,8 @@ const validId = (value: unknown): value is string | number => typeof value === '
 
 export function protocolSession(tools: unknown[], call: (name: string | undefined, args: Record<string, unknown>, signal: AbortSignal) => Promise<unknown>) {
   const active = new Map<string | number, AbortController>();
-  let state: 'new' | 'initializing' | 'ready' = 'new';
-  return async (line: string): Promise<unknown | undefined> => {
+  let state: 'new' | 'initializing' | 'ready' | 'closed' = 'new';
+  const handle = async (line: string): Promise<unknown | undefined> => {
     let value: unknown;
     try { value = JSON.parse(line); } catch { return { jsonrpc: '2.0', id: null, error: { code: -32700, message: 'Parse error' } }; }
     let id: string | number | null = null;
@@ -18,6 +18,7 @@ export function protocolSession(tools: unknown[], call: (name: string | undefine
       if (!object(value) || value.jsonrpc !== '2.0' || typeof value.method !== 'string' || !value.method || (Object.hasOwn(value, 'id') && !validId(value.id))) throw new RpcError(-32600, 'Invalid request');
       notification = !Object.hasOwn(value, 'id');
       id = notification ? null : value.id as string | number;
+      if (state === 'closed') throw new RpcError(-32000, 'MCP input is closed');
       if (notification) {
         if (value.method === 'notifications/cancelled' && object(value.params) && validId(value.params.requestId) && (value.params.reason === undefined || typeof value.params.reason === 'string')) {
           active.get(value.params.requestId)?.abort(new Error(typeof value.params.reason === 'string' ? value.params.reason : 'Request cancelled'));
@@ -65,4 +66,9 @@ export function protocolSession(tools: unknown[], call: (name: string | undefine
       return { jsonrpc: '2.0', id, error: { code: error instanceof ParameterError ? -32602 : error instanceof RpcError ? error.code : -32603, message: error instanceof Error ? error.message : String(error) } };
     }
   };
+  return Object.assign(handle, { close() {
+    if (state === 'closed') return;
+    state = 'closed';
+    for (const controller of active.values()) controller.abort(new Error('MCP input closed'));
+  } });
 }

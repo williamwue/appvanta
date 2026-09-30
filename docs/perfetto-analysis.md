@@ -4,6 +4,8 @@
 
 ## 安装与调用
 
+管道关闭的三系统启动期验收：公开 `99489ef` 的 CI `36673361082` 三个 host build 任务均通过，每平台 94 个文件、合计 282 个文件已核验大小/SHA-256。Windows `perfetto-startup-1790746204962`（236 ms）、Linux `1790746038683`（18 ms）、macOS `1790746092384`（15 ms）均在实际持有的未就绪子进程启动后关闭 stdin 管道，记录 ownerDisconnected=true，处理器/解析器退出且清理无错误。各平台取消文件路径也通过。归档位于集成工作区 `.appvanta/ci-36673361082-{windows,ubuntu,macos}/`，完整性回执在同级 `*-integrity.json`。这是直接管道 EOF 与启动夹具证据，不是 SDK SIGKILL 的真实加载阶段证据；本次核验时 Android 任务仍运行，不能把整轮称为全绿。
+
 宿主强杀失败与修正：公开 `0b29c0a` 的 CI `36670461231` 在 Linux owner-kill 验收失败，3440 个设备归档文件已完整性核验。`perfetto-cancellation-1790744925907/owner-death-observation.json` 记录 SDK PID 10812 被 SIGKILL 后，分析器 10823 和处理器 10826 继续到重复输入产生解析/data-loss 错误，6445 ms 后退出，`cancellation.requested=false`。这证明当时缺少宿主断连取消，不是永久泄漏；没有放宽 5 秒门槛。SDK 现传入 `--owner-stdin`，分析器以不持有 Python 缓冲流锁的读取线程监听宿主管道关闭，触发现有取消/处理器树清理，并记录 `ownerDisconnected`。独立 Python 调用默认不监听 stdin。12 项 Python 测试、四包构建、Windows 真实 trace 回归 `perfetto-cancellation-1790745385224` 通过；启动未就绪夹具 `perfetto-startup-1790745383870` 的管道 EOF 在 192 ms 内终止实际子进程。POSIX 宿主强杀验收还要求保留 ownerDisconnected 取消回执；Windows 若操作系统直接终止分析进程，则保留外部进程退出观测。Linux/macOS 新修正尚待托管验证，这些结果不证明直接强杀 Python 分析器本身时的全部清理行为。
 
 Windows 控制台托管验收补充：公开 `bcd884d` 的 [CI 36669801949](https://github.com/williamwue/appvanta/actions/runs/36669801949) 七项全部通过。Windows 分析归档的 58 个文件已本机逐一核验大小/SHA-256；`perfetto-cancellation-1790744617819` SDK/MCP/CLI 取消分别为 38/55/79 ms，诊断均为 cancelled，解析器与处理器退出且 cleanupError 为 null，归档中均无成功指标或报告。CLI 回执确认独立隐藏控制台仅含 runner 1468 与 CLI 7124，发送真实 CTRL_C_EVENT 后 31 ms 以退出码 1 结束。原始 trace 的三项指标与设备端预期一致；取消夹具仍是重复扩展输入。归档位于集成工作区 `.appvanta/ci-36669801949-analysis-windows/`，完整性回执在同级 `ci-36669801949-analysis-windows-integrity.json`。本次只独立下载核验 Windows 分析归档，其他平台依 CI 任务状态；该快照不含后续宿主强杀、失败产物修正和 SQL 查询中断验证，也不证明所有 Windows 终端环境。
