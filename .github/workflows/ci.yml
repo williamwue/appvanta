@@ -128,7 +128,7 @@ jobs:
         run: |
           adb="$ANDROID_SDK_ROOT/platform-tools/adb"
           "$adb" kill-server
-          ADB_TRACE=transport "$adb" start-server
+          ADB_TRACE=transport,rwx "$adb" start-server
           nohup "$ANDROID_SDK_ROOT/emulator/emulator" -avd appvanta-ci -accel on -no-window -no-audio -no-boot-anim -no-snapshot -gpu swiftshader_indirect > emulator.log 2>&1 &
           emulator_pid=$!
           if ! timeout 120s "$adb" wait-for-device; then

@@ -1,5 +1,9 @@
 # Android 请求级采集
 
+2026-09-30 补充：CI `36666273632` 三系统构建通过，Android 首条受控采样的 Perfetto 拉取返回 1、stdout/stderr 为空，依赖它的三系统 trace 分析任务被跳过。归档 `.appvanta/ci-36666273632/.appvanta/ci-evidence` 的 3248 个文件已核验大小与 SHA-256。`perfetto-sampling-1790741600078` 主机日志显示 04:13:30.889 发送 `RCV2`，.892 发生 `terminated (data)` 及 read failed；设备从 transport 3 offline，04:13:31.302 以 transport 4 回到 device。设备端 adbd PID 444 记录 write failed 并重建连接。失败后的 boot ID 查询因 offline 失败，不据此断言设备是否重启；主机与设备日志时钟未校准，也不依据绝对时间判断哪端先失败。
+
+主机日志为最后 2,097,152 字节，原始大小 3,339,109、偏移 1,241,957，快照 SHA-256 `007aab1a29f413e385b7ae83bebb35cf2996cfb0bef14b3e8b37781beaddf321`。它将失败定位到传输数据读取窗口，不能区分 EOF、系统错误或断连发起端，更不证明压缩问题。[AOSP 传输实现](https://android.googlesource.com/platform/packages/modules/adb/+/7447d5485dfd1dcc4f090810cf67b33b9850599f/transport.cpp)在数据读取失败处输出该消息；[底层读取实现](https://android.googlesource.com/platform/packages/modules/adb/+/d86f7f30f61e1242bb3b63002713e3c1ff4a98ec/adb_io.cpp)在 `rwx` 类别记录错误码或 EOF。这是源代码对应关系分析，尚未证明所读提交与运行中的 ADB 37.0.1 二进制完全对应。CI 因此将诊断类别扩展为 `transport,rwx`，继续只归档 2 MiB 尾部；新诊断结果待运行，不改变产品拉取、重试、文件保留或租约规则。更详细日志可能影响时序，后续成功不能消除原失败。
+
 最新故障定位：CI `36662397215` 的采样首条 trace 拉取失败，归档 `.appvanta/ci-36662397215/.appvanta/ci-evidence` 的 3189 个文件已核验大小与 SHA-256。`perfetto-sampling-1790738416227/adb-transport.json` 记录主机时间 03:20:26.645 设备 offline，随后 transport 2 消失，03:20:27.015 transport 3 online；事件无丢弃。设备 adbd 日志记录 `connection terminated: write failed`、offline、销毁 host-18，之后建立 host-17，日志 PID 为 437。结束快照的 boot ID/PID 查询因 offline 失败，不能据此确认前后 boot ID 不变。此证据证明本次拉取失败伴随设备端连接中断，不能确定中断触发者或解释全部历史失败；尚缺主机 ADB server 同期日志。原始失败、远端保留状态及 lease 证据保持不变。
 
 ## 设备端连接重建后的采集恢复
