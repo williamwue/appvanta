@@ -88,6 +88,11 @@ jobs:
       - name: Verify Node supervisor cancels the packaged Gradle bridge
         timeout-minutes: 5
         run: node scripts/verify-gradle-supervisor.mjs
+      - name: Verify managed daemon cleanup after Gradle configuration failure
+        timeout-minutes: 5
+        env:
+          APPVANTA_GRADLE_SUPERVISOR_MODE: configuration-failure
+        run: node scripts/verify-gradle-supervisor.mjs
       - name: Verify installed Python SDK
         timeout-minutes: 5
         run: |

@@ -33,6 +33,10 @@ Bridge 强制终止：Windows `gradle-cancellation-1790750594684` 在 Worker 285
 
 ## 下一实现单元与验收门槛
 
+包内 bridge 现在生成排他的受管理 init script，并在 Gradle 配置求值前写 `bridge.json.daemons/<pid>.json`。记录包含本次随机 invocation、PID、进程启动时间及 Gradle 实际用户目录；用户目录与请求的规范路径不符时拒绝继续。同一进程重复应用 init script 只能接受完全相同的身份记录，不覆盖旧记录。路径以 UTF-8/Base64 嵌入生成脚本，最终 bridge 回执携带同一 invocation。启动时间是恢复核验的输入，当前尚未实现据此判断 PID 复用或自动恢复的入口。
+
+Windows `gradle-supervisor-1790753003368` 已用运行时身份记录代替测试任务自报 PID，通过实际执行后的取消和清理。`1790753065621` 在 settings.gradle 配置阶段主动抛出预期错误，确认任务体从未执行，却已记录 daemon 29336 及启动时间；BuildException 回执与身份 invocation 一致，专属 stop 后确认退出并释放占用。`gradle-cancellation-1790753072771` 成功回归及 `1790753100658` bridge 强杀回归通过；后者无最终回执但身份文件保留、占用不释放。四包打包/安装字节一致性验收通过；配置失败场景加入三系统 CI，托管结果待确认。
+
 Node 监督的首个内部模块 `build-process.ts` 已实现：参数直接传给 spawn，独立进程持有 stdin；AbortSignal、期限或输出上限先关闭输入，宽限期后才强杀拥有的进程。输出按总字节上限写入排他日志并保存摘要，接收超限仍继续排空但不继续保留；退出后最多等待一秒排空管道，后代仍持有管道时返回 outputComplete=false。回执分开记录真实退出码、打断原因、强杀及日志状态，descendantCleanup 始终是 unverified。文件同步或回执保存失败仍会抛错，不能以成功结果释放占用。
 
 Windows 七项真实子进程测试覆盖正常失败、超时后协作退出 0、超量输出、忽略 EOF 后强杀、预先/运行中取消、启动失败及后代持有管道。完整回归为 core 127、Android 119、脚本 48 项通过，1 项 POSIX 用例跳过。`gradle-supervisor-1790752708227` 用该模块编译并运行包内 bridge，确认 Gradle 任务实际执行后触发 AbortSignal，收到 cancelled 回执且未强杀；专属 stop 后外部确认 daemon 退出并归档释放占用。`gradle-cancellation-1790752619180` 也使用该模块执行 stop 与重复回执拒绝检查。三系统 CI 已加入监督器真实取消验证，结果待确认；公共请求/报告接口及恢复仍待实现。

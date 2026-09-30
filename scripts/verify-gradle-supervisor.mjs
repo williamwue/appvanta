@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { mkdir, readFile, realpath, writeFile } from 'node:fs/promises';
+import { mkdir, readFile, readdir, realpath, writeFile } from 'node:fs/promises';
 import { delimiter, dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { setTimeout as delay } from 'node:timers/promises';
@@ -9,6 +9,8 @@ import { resolveGradleInstallation } from './gradle-installation.mjs';
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const installation = resolveGradleInstallation(process.argv[2]);
+const mode = process.env.APPVANTA_GRADLE_SUPERVISOR_MODE ?? 'cancel';
+assert(['cancel', 'configuration-failure'].includes(mode), 'Invalid supervisor mode');
 assert(process.env.JAVA_HOME, 'JAVA_HOME is required');
 const binary = name => join(process.env.JAVA_HOME, 'bin', name + (process.platform === 'win32' ? '.exe' : ''));
 const id = `gradle-supervisor-${Date.now()}`;
@@ -16,10 +18,11 @@ const work = join(root, '.appvanta/gradle-projects', id);
 const project = join(work, 'project'), classes = join(work, 'classes'), userHome = join(work, 'gradle-home');
 const evidence = join(root, '.appvanta/runs', id);
 for (const directory of [project, classes, evidence]) await mkdir(directory, { recursive: true });
-await writeFile(join(project, 'settings.gradle'), "rootProject.name = 'AppVantaSupervisor'\n");
+await writeFile(join(project, 'settings.gradle'), "rootProject.name = 'AppVantaSupervisor'\n" +
+  (mode === 'configuration-failure' ? "throw new GradleException('APPVANTA_EXPECTED_CONFIGURATION_FAILURE')\n" : ''));
 await writeFile(join(project, 'build.gradle'), `tasks.register('waitForOwner') {
   doLast {
-    file('executing.json').text = groovy.json.JsonOutput.toJson([pid: ProcessHandle.current().pid(), userHome: gradle.gradleUserHomeDir.absolutePath])
+    file('executing.txt').text = 'executing'
     Thread.sleep(60000)
   }
 }\n`);
@@ -32,7 +35,7 @@ checked(await runBuildProcess({ file: binary('javac'), args: ['-classpath', clas
   join(root, 'packages/android/dist/runtime/GradleBuildBridge.java')], cwd: root, logPath: join(evidence, 'compile.log'), timeoutMs: 30000 }));
 const ownership = await acquireBuildProject(project);
 const controller = new AbortController();
-const report = { status: 'running', project, userHome, installation, owner: ownership.owner };
+const report = { status: 'running', mode, project, userHome, installation, owner: ownership.owner };
 const receipt = join(evidence, 'bridge.json');
 const execution = runBuildProcess({ file: binary('java'), args: ['-classpath', classes + delimiter + classpath,
   'GradleBuildBridge', installation.home, project, userHome, receipt, '1', 'waitForOwner', '--offline', '--console=plain', '--max-workers=1'],
@@ -44,30 +47,41 @@ const stop = () => runBuildProcess({ file: binary('java'), args: ['-classpath', 
   '--stop', '--gradle-user-home', userHome], cwd: project, logPath: join(evidence, report.stop ? 'fallback-stop.log' : 'stop.log'), timeoutMs: 30000 });
 try {
   const deadline = Date.now() + 120000;
-  while (!report.task) {
+  let executing = false;
+  while (mode === 'cancel' && !executing) {
     assert(!terminal, 'Bridge completed before task handshake');
-    try { report.task = JSON.parse(await readFile(join(project, 'executing.json'), 'utf8')); }
-    catch (error) { if (error.code !== 'ENOENT' && !(error instanceof SyntaxError)) throw error; }
+    try { executing = await readFile(join(project, 'executing.txt'), 'utf8') === 'executing'; }
+    catch (error) { if (error.code !== 'ENOENT') throw error; }
     assert(Date.now() < deadline, 'Task handshake timed out');
-    if (!report.task) await delay(50);
+    if (!executing) await delay(50);
   }
+  if (mode === 'configuration-failure') report.process = await execution;
+  const daemonFiles = await readdir(receipt + '.daemons');
+  assert.equal(daemonFiles.length, 1);
+  report.task = JSON.parse(await readFile(join(receipt + '.daemons', daemonFiles[0]), 'utf8'));
+  assert(Number.isSafeInteger(report.task.startEpochMillis) && report.task.startEpochMillis > 0);
   assert(alive(report.task.pid));
   assert.equal(await realpath(report.task.userHome), await realpath(userHome));
   await writeFile(join(evidence, 'before-abort.json'), JSON.stringify(report, null, 2));
-  controller.abort();
+  if (mode === 'cancel') controller.abort();
   report.process = await execution;
   assert.equal(report.process.status, 'exited'); assert.equal(report.process.exitCode, 0);
-  assert.equal(report.process.interruption, 'aborted'); assert.equal(report.process.forced, false);
+  assert.equal(report.process.interruption, mode === 'cancel' ? 'aborted' : null); assert.equal(report.process.forced, false);
   assert.equal(report.process.outputComplete, true); assert.equal(report.process.logError, null);
   report.bridge = JSON.parse(await readFile(receipt, 'utf8'));
-  assert.equal(report.bridge.status, 'cancelled');
-  assert.equal(report.bridge.failureClass, 'org.gradle.tooling.BuildCancelledException');
+  assert.equal(report.bridge.status, mode === 'cancel' ? 'cancelled' : 'failed');
+  assert.equal(report.bridge.failureClass, mode === 'cancel' ? 'org.gradle.tooling.BuildCancelledException' : 'org.gradle.tooling.BuildException');
+  if (mode === 'configuration-failure') {
+    assert.match(await readFile(join(evidence, 'build.log'), 'utf8'), /APPVANTA_EXPECTED_CONFIGURATION_FAILURE/);
+    await assert.rejects(readFile(join(project, 'executing.txt')), { code: 'ENOENT' });
+  }
   assert.equal(report.bridge.bridgePid, report.process.pid);
+  assert.equal(report.bridge.invocation, report.task.invocation);
   report.stop = await stop(); checked(report.stop);
   const stopDeadline = Date.now() + 10000;
   while (alive(report.task.pid)) { assert(Date.now() < stopDeadline, 'Daemon did not exit'); await delay(50); }
   report.daemonExited = true;
-  report.ownership = await ownership.finish({ execution: 'cancelled', cleanup: 'verified' });
+  report.ownership = await ownership.finish({ execution: mode === 'cancel' ? 'cancelled' : 'failed', cleanup: 'verified' });
   assert.equal(report.ownership.released, true);
   report.status = 'passed';
 } catch (error) {

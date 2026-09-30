@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { execFile, spawn } from 'node:child_process';
-import { mkdir, readFile, realpath, writeFile } from 'node:fs/promises';
+import { mkdir, readFile, readdir, realpath, writeFile } from 'node:fs/promises';
 import { delimiter, dirname, join, resolve } from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
 import { fileURLToPath } from 'node:url';
@@ -134,6 +134,12 @@ try {
   }, 120000, 'actual Gradle task execution');
   assert(alive(report.task.pid));
   assert.equal(await realpath(report.task.userHome), await realpath(userHome));
+  const daemonFiles = await readdir(receipt + '.daemons');
+  assert(daemonFiles.includes(`${report.task.pid}.json`));
+  report.daemonIdentity = JSON.parse(await readFile(join(receipt + '.daemons', `${report.task.pid}.json`), 'utf8'));
+  assert.equal(report.daemonIdentity.pid, report.task.pid);
+  assert(Number.isSafeInteger(report.daemonIdentity.startEpochMillis) && report.daemonIdentity.startEpochMillis > 0);
+  assert.equal(await realpath(report.daemonIdentity.userHome), await realpath(userHome));
   if (['javaexec', 'worker'].includes(mode)) {
     report.worker = await wait(async () => {
       assert(!exited(), `Bridge exited before ${mode} child; inspect ${join(evidence, 'stderr.log')}`);
@@ -204,6 +210,7 @@ try {
     assert.equal(report.bridge.version, 1);
     assert.equal(report.bridge.bridgePid, report.bridgePid);
     assert.equal(report.bridge.taskCount, tasks.length);
+    assert.equal(report.bridge.invocation, report.daemonIdentity.invocation);
   }
   await writeFile(join(evidence, 'before-stop.json'), JSON.stringify(report, null, 2), { flag: 'wx' });
   const stopped = await runBuildProcess({ file: java, args: ['-classpath', installation.launcher, 'org.gradle.launcher.GradleMain', '--stop', '--gradle-user-home', userHome], cwd: project, logPath: join(evidence, 'stop.log'), timeoutMs: 30000 });

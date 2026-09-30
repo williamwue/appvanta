@@ -6,6 +6,8 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.StandardOpenOption;
 import java.util.Arrays;
+import java.util.Base64;
+import java.util.UUID;
 import org.gradle.tooling.BuildCancelledException;
 import org.gradle.tooling.CancellationTokenSource;
 import org.gradle.tooling.GradleConnector;
@@ -21,6 +23,29 @@ public final class GradleBuildBridge {
         String[] arguments = Arrays.copyOfRange(args, 5 + taskCount, args.length);
         Path receipt = Path.of(args[3]);
         if (Files.exists(receipt)) throw new IllegalArgumentException("Receipt already exists");
+        String invocation = UUID.randomUUID().toString();
+        Path daemonRecords = Path.of(args[3] + ".daemons").toAbsolutePath();
+        Files.createDirectory(daemonRecords);
+        Path initScript = Path.of(args[3] + ".init.gradle").toAbsolutePath();
+        String recordsEncoded = Base64.getEncoder().encodeToString(daemonRecords.toString().getBytes(StandardCharsets.UTF_8));
+        String homeEncoded = Base64.getEncoder().encodeToString(new File(args[2]).getCanonicalPath().getBytes(StandardCharsets.UTF_8));
+        String script = "def records = new File(new String(java.util.Base64.decoder.decode('" + recordsEncoded + "'), 'UTF-8'))\n"
+            + "def expectedHome = new File(new String(java.util.Base64.decoder.decode('" + homeEncoded + "'), 'UTF-8')).canonicalFile\n"
+            + "if (gradle.gradleUserHomeDir.canonicalFile != expectedHome) throw new GradleException('Managed Gradle user home mismatch')\n"
+            + "def process = ProcessHandle.current()\n"
+            + "def record = [version: 1, invocation: '" + invocation + "', pid: process.pid(), startEpochMillis: process.info().startInstant().map { it.toEpochMilli() }.orElse(null), userHome: gradle.gradleUserHomeDir.canonicalPath]\n"
+            + "def target = new File(records, process.pid().toString() + '.json').toPath()\n"
+            + "def bytes = groovy.json.JsonOutput.toJson(record).getBytes('UTF-8')\n"
+            + "try {\n"
+            + "  def channel = java.nio.channels.FileChannel.open(target, java.nio.file.StandardOpenOption.CREATE_NEW, java.nio.file.StandardOpenOption.WRITE)\n"
+            + "  try { def buffer = java.nio.ByteBuffer.wrap(bytes); while (buffer.hasRemaining()) channel.write(buffer); channel.force(true) } finally { channel.close() }\n"
+            + "} catch (java.nio.file.FileAlreadyExistsException existing) {\n"
+            + "  if (new groovy.json.JsonSlurper().parse(target.toFile(), 'UTF-8') != record) throw new GradleException('Managed Gradle daemon identity changed')\n"
+            + "}\n";
+        Files.writeString(initScript, script, StandardCharsets.UTF_8, StandardOpenOption.CREATE_NEW);
+        String[] managedArguments = Arrays.copyOf(arguments, arguments.length + 2);
+        managedArguments[arguments.length] = "--init-script";
+        managedArguments[arguments.length + 1] = initScript.toString();
         long started = System.nanoTime();
         CancellationTokenSource cancellation = GradleConnector.newCancellationTokenSource();
         Thread owner = new Thread(() -> {
@@ -36,7 +61,7 @@ public final class GradleBuildBridge {
                 .useInstallation(new File(args[0]))
                 .forProjectDirectory(new File(args[1]))
                 .useGradleUserHomeDir(new File(args[2])).connect()) {
-            connection.newBuild().forTasks(tasks).withArguments(arguments)
+            connection.newBuild().forTasks(tasks).withArguments(managedArguments)
                 .withCancellationToken(cancellation.token())
                 .setStandardOutput(System.out).setStandardError(System.err).run();
         } catch (BuildCancelledException error) {
@@ -47,7 +72,7 @@ public final class GradleBuildBridge {
             failure = error.getClass().getName();
             error.printStackTrace(System.err);
         }
-        String json = "{\"version\":1,\"status\":\"" + status + "\",\"failureClass\":\"" + failure
+        String json = "{\"version\":1,\"invocation\":\"" + invocation + "\",\"status\":\"" + status + "\",\"failureClass\":\"" + failure
             + "\",\"cancellationRequested\":" + cancellation.token().isCancellationRequested()
             + ",\"bridgePid\":" + ProcessHandle.current().pid() + ",\"taskCount\":" + tasks.length
             + ",\"elapsedMs\":" + (System.nanoTime() - started) / 1000000 + "}";
