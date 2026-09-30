@@ -16,7 +16,7 @@ API 37 / Android 17 已验证裁决后步骤边界再次崩溃、只读等待执
 
 本轮分支裁决修订：构建及完整回归 248 项通过（core 121、Android 87、脚本 40），包含测试 Driver 下首次分支动作执行中强杀后的证据固定、缺失拒绝及裁决准备的字节变更拒绝。日志位于集成工作区 `.appvanta/active-branch-build.log` 和 `.appvanta/active-branch-full-tests.log`；后续 API 37 Markor Unicode 输入的分支裁决已通过 CLI/MCP 预约及执行验证，详见 flow-templates.md；该场景不等于任意分支或应用均已验收。
 
-当前已确认托管通过的是公开快照 `c0399c9`（本地 `496196c`），[运行 36627292671](https://github.com/williamwue/appvanta/actions/runs/36627292671) 的三系统任务及 API 35 模拟器任务均成功，含安装 Unicode 输入 helper 后的单层 CLI 和嵌套 MCP 裁决。此次确认任务结果，未下载该成功运行的归档。后续动态值快照 `a968c30` 的运行 `36628200065` 尚在进行；本地构建及 253 项完整回归、API 37 CLI/MCP 和值提取后强杀续跑已通过，详见 flow-values.md。
+当前已确认托管通过的是公开快照 `d5a1bbd`（本地 `ae038d2`），[运行 36631565559](https://github.com/williamwue/appvanta/actions/runs/36631565559) 的三系统任务及 API 35 模拟器任务均成功，含动态值和单附件系统选择器验收。此次确认任务结果，未下载该成功运行的归档。此前动态值运行 `36628200065` 和 `36628674091` 也已通过。后续 URI 校验修订 `4f96055` 构建及完整 257 项回归通过；这些结果均不证明全部清单完成。运行 `36630143675` 的 Perfetto 拉取失败仍未解释，1842 个归档文件已校验，见 network-capture.md。
 
 ## 本轮已完成的范围
 
@@ -80,7 +80,7 @@ API 37 / Android 17 已验证裁决后步骤边界再次崩溃、只读等待执
 
 - [ ] OCR 与外部 Agent 视觉判断接入，图像模板跨 DPI/主题验证。
 - [ ] 探索式执行及快速/计划两种 Agent 工作流的端到端验收；Planner/Checker 继续由客户端 Agent 承担，不内置强制模型 API。
-- [ ] 附件分享、系统选择器、更多跨应用组合和多语言界面。已有 content URI 的只读单附件分享已接入 Action/Flow/MCP，API 37 独立双应用验证实际字节、读写权限及撤销；本地文件托管、多附件、系统选择器和更多应用仍待完成，见 file-sharing.md。
+- [ ] 附件分享、系统选择器、更多跨应用组合和多语言界面。已有 content URI 的只读单附件分享已接入 Action/Flow/MCP，API 37 独立双应用验证实际字节、读写权限及撤销，系统选择器接收和取消已有 API 35/37 验收。双附件原生桥接机制已通过 API 37 测试夹具验证，产品入口尚未实现；本地文件托管、多附件产品接入、多语言选择器和更多应用仍待完成，见 file-sharing.md、multi-attachment-design.md。
 - [ ] shake、更完整的设备状态控制及原状态恢复。模拟器摇动已接入 CLI/MCP Flow、MCP 独立动作及 SDK 单动作入口；三轴控制台恢复、MCP 取消、独立应用 SensorEvent 回调、宿主强杀，以及模拟器实际退出重启后的标准恢复已有 API 37 证据。任意应用响应、更多断连/重启冲突组合、多设备及真机仍待验收，见 emulator-sensors.md。
 - [ ] 更多 Android 构建配置、项目结构及构建失败诊断。
 - [ ] AVD 创建、依赖安装、设备授权引导及启动取消的产品化。

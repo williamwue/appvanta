@@ -4,6 +4,7 @@
   <application android:label="AppVanta Share Receiver" android:debuggable="true" android:allowBackup="false">
     <activity android:name=".ReceiveActivity" android:exported="true">
       <intent-filter><action android:name="android.intent.action.SEND" /><category android:name="android.intent.category.DEFAULT" /><data android:mimeType="*/*" /></intent-filter>
+      <intent-filter><action android:name="android.intent.action.SEND_MULTIPLE" /><category android:name="android.intent.category.DEFAULT" /><data android:mimeType="*/*" /></intent-filter>
     </activity>
   </application>
 </manifest>
