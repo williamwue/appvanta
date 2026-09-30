@@ -7,6 +7,7 @@ import { fileURLToPath } from 'node:url';
 import { promisify } from 'node:util';
 import { resolveGradleInstallation } from './gradle-installation.mjs';
 import { runLoggedCommand } from './logged-command.mjs';
+import { acquireBuildProject } from '../packages/android/dist/build-ownership.js';
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const installation = resolveGradleInstallation(process.argv[2]);
@@ -69,6 +70,8 @@ const receipt = join(evidence, 'bridge.json');
 const taskName = { wait: 'waitForCancellation', javaexec: 'childProcess', worker: 'isolatedWorker' }[mode];
 const bridgeArgs = ['-classpath', classes + delimiter + classpath, 'GradleCancellationProbe', installation.home, project, userHome, receipt, taskName];
 const ownershipPath = join(evidence, 'owner.json');
+const projectOwnership = await acquireBuildProject(project);
+await assert.rejects(acquireBuildProject(project), { code: 'BUILD_PROJECT_BUSY' });
 const child = trigger === 'owner-kill'
   ? spawn(process.execPath, [join(root, 'scripts/fixtures/gradle-bridge-owner.mjs'), ownershipPath, java, ...bridgeArgs], { cwd: root, windowsHide: true, stdio: ['pipe', 'pipe', 'pipe'] })
   : spawn(java, bridgeArgs, { cwd: root, windowsHide: true, stdio: ['pipe', 'pipe', 'pipe'] });
@@ -77,7 +80,7 @@ child.stdout.on('data', chunk => { stdout += chunk; });
 child.stderr.on('data', chunk => { stderr += chunk; });
 child.on('error', error => { spawnError = error; });
 const exited = () => child.exitCode !== null || child.signalCode !== null;
-const report = { status: 'running', mode, trigger, evidence, project, userHome, installation, ...(trigger === 'owner-kill' ? { ownerPid: child.pid } : { bridgePid: child.pid }) };
+const report = { status: 'running', mode, trigger, evidence, project, userHome, installation, projectOwner: projectOwnership.owner, ...(trigger === 'owner-kill' ? { ownerPid: child.pid } : { bridgePid: child.pid }) };
 const wait = async (test, ms, description) => {
   const deadline = Date.now() + ms;
   do {
@@ -190,6 +193,17 @@ try {
   }
   await writeFile(join(evidence, 'stdout.log'), stdout);
   await writeFile(join(evidence, 'stderr.log'), stderr);
+  try {
+    report.projectOwnership = await projectOwnership.finish({
+      execution: report.status === 'passed' && report.bridge?.status === 'cancelled' ? 'cancelled' : 'unknown',
+      cleanup: report.daemonExited && (!report.worker || report.workerExitedAfterStop) ? 'verified' : 'unverified',
+    });
+    await writeFile(join(evidence, 'project-outcome.json'), await readFile(join(report.projectOwnership.recordDirectory, 'outcome.json')));
+    assert.equal(report.projectOwnership.released, report.status === 'passed' && trigger !== 'bridge-kill');
+    if (!report.projectOwnership.released) await assert.rejects(acquireBuildProject(project), { code: 'BUILD_PROJECT_BUSY' });
+  } catch (error) {
+    report.status = 'failed'; report.projectOwnershipError = String(error); process.exitCode = 1;
+  }
   await writeFile(join(evidence, 'verification.json'), JSON.stringify(report, null, 2));
   child.stdout.destroy();
   child.stderr.destroy();

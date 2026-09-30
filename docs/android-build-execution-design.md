@@ -33,6 +33,12 @@ Bridge 强制终止：Windows `gradle-cancellation-1790750594684` 在 Worker 285
 
 ## 下一实现单元与验收门槛
 
+项目占用的首个内部实现位于 `packages/android/src/build-ownership.ts`，尚未作为公共 SDK 导出。以项目真实路径下 `.appvanta/android-build/active` 的排他目录创建获得占用；owner/outcome 回执使用排他写入并同步文件。已存在但内容不完整的目录同样拒绝新构建，不根据 PID 消失删除锁。终态明确且 supervisor 确认清理后，将整个 active 目录重命名到唯一 runs 目录；未知执行或清理未确认时保留 active。该实现依赖协作进程不自行替换状态目录，不提供恶意并发文件系统修改防护或断电持久性保证；显式恢复入口仍待实现。
+
+吞吐与实现边界：同一项目只有一个写入者，不同项目目录独立。锁记录是共享可变状态；本单元由根执行者串行修改、构建和验证。托管结果不阻塞本地开发，产品构建 API 的开放仍取决于生命周期和恢复验收。六项测试覆盖六个独立 Node 进程竞争、持有进程退出、路径别名、状态目录链接、部分写入/记录损坏、终结竞争、回执写入失败及其他项目仍可运行。
+
+真实 Gradle 验证已调用该内部模块：Windows `gradle-cancellation-1790751552566` 父 Node 强杀后收到 cancelled 回执，确认 daemon/Worker 退出，归档并释放项目占用；`1790751561616` bridge 强杀后执行未知，尽管专属 daemon 清理已确认，仍保留 active 并拒绝再次申请。归档 `project-outcome.json` 分别记录执行与清理结果。完整四包构建、127 项 core 测试、112 项 Android 测试及脚本 48 项通过，1 项 POSIX 信号测试在 Windows 跳过；新占用模块的三系统 CI 待验证。
+
 由一个写入者负责 Android 包的执行器、Java runtime bridge 和共享报告类型；CLI/MCP 在 SDK 生命周期通过后接入，同一项目的状态文件修改串行进行。现有跨平台 CI 和设备验收可以独立运行，互不占用这套专属 Gradle 用户目录。
 
 先完成 JavaExec/Worker 与 bridge 强杀的托管验收，并补父 Node 退出、取消与正常完成竞争、专属 daemon 停止失败及重复恢复，再实现带占用保护的 SDK。验收必须证明无重复构建、未确认清理不释放占用、其他项目及用户默认 daemon 不被停止。随后提供 CLI/MCP 执行和取消，并将实际 Android 两模块 APK 构建从验证专用入口迁移到产品入口。
