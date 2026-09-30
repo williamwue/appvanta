@@ -35,3 +35,7 @@ node scripts/verify-multi-share-probe.mjs emulator-5554
 该机制验证以单写入者在隔离工作区完成；设备操作串行执行。API 35 托管步骤已配置，结果必须以对应 CI 记录为准。
 
 提交前复核：修改共享夹具后的单附件完整复验 file-share-1790717276569 被中断，进程已退出且设备不在线；运行 2026-09-29T21-28-57-881Z-emulator-5554-f5353b8d 停在打开系统选择器的 executing 状态。租约与证据保留，不能计为本版单附件回归通过，恢复设备后须显式处理。双附件上述通过证据仍有效。
+
+后续恢复与复验：原 AppVanta_Verification_API37 AVD 重新启动后，核对系统指纹一致，按原 token 调用 recover-flow 返回 environment-cleanup；证据为原运行 recovery/b0e4d80a-3971-437e-8f7b-6dd4774eb503.json。仅删除旧运行具名测试文件，旧 progress.json 保持不变，未继续原业务流程。新运行 .appvanta/runs/file-share-1790726829703/verification.json 已通过 CLI、MCP、选择器取消不交付与再次选择交付，以及权限撤销、文件删除和租约释放，补齐共享夹具改动后的 API 37 单附件复验。
+
+来源撤销补充：API 37 运行 .appvanta/runs/multi-share-probe-1790727033098/verification.json 通过。第一项准备后，来源撤销该 URI 的只读授权但保留文件；接着准备第二项时，桥接应用在最终 startActivity 受到 Android SecurityException 拒绝，接收端没有 received.json。来源重新授予 shell 读取权限后，新 operation 的两项交付、摘要与只读检查通过。夹具增加具名文件的 revoke/grant 控制，不改变产品授权策略。

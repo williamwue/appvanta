@@ -20,7 +20,15 @@ public final class SourceActivity extends Activity {
         Uri uri = Uri.parse("content://dev.appvanta.share.source/payload/" + token);
         File file = new File(getFilesDir(), token + ".bin");
         String message;
-        if (getIntent().getBooleanExtra("cleanup", false)) {
+        if (getIntent().getBooleanExtra("revoke", false)) {
+            if (!file.isFile()) throw new IllegalStateException("Fixture missing");
+            revokeUriPermission(uri, Intent.FLAG_GRANT_READ_URI_PERMISSION);
+            message = "Revoked " + token;
+        } else if (getIntent().getBooleanExtra("grant", false)) {
+            if (!file.isFile()) throw new IllegalStateException("Fixture missing");
+            grantUriPermission("com.android.shell", uri, Intent.FLAG_GRANT_READ_URI_PERMISSION);
+            message = "Granted " + token;
+        } else if (getIntent().getBooleanExtra("cleanup", false)) {
             revokeUriPermission(uri, Intent.FLAG_GRANT_READ_URI_PERMISSION);
             if (file.exists() && !file.delete()) throw new IllegalStateException("Cannot remove fixture");
             message = "Removed " + token;

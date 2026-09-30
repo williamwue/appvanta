@@ -40,6 +40,14 @@ try {
     await driver.stopApp(device, relay);
     await prepare(interrupted, 1); await waitText('Missing or mismatched preparation'); await noDelivery(); evidence.lostPreparationRejected = true;
     await driver.stopApp(device, relay);
+    const revoked = randomUUID();
+    await prepare(revoked, 0); await waitText(`Prepared ${revoked}`);
+    await adb('shell', 'am', 'start', '-W', '-n', `${source}/.SourceActivity`, '--es', 'token', tokens[0], '--ez', 'revoke', 'true');
+    await waitText(`Revoked ${tokens[0]}`);
+    await prepare(revoked, 1); await waitText('failed: java.lang.SecurityException'); await noDelivery(); evidence.revokedPreparationRejected = true;
+    await driver.stopApp(device, relay);
+    await adb('shell', 'am', 'start', '-W', '-n', `${source}/.SourceActivity`, '--es', 'token', tokens[0], '--ez', 'grant', 'true');
+    await waitText(`Granted ${tokens[0]}`);
     const operation = randomUUID();
     await prepare(operation, 0); await waitText(`Prepared ${operation}`); await noDelivery();
     await prepare(operation, 1); await waitText('received');
