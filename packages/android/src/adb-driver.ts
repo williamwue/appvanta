@@ -2,6 +2,7 @@ import { captureArtifact } from './capture.js';
 import { textShareArguments } from './text-share.js';
 import { fileShareArguments } from './file-share.js';
 import { shareFiles, readAttachmentShare } from './multi-file-share.js';
+import { uploadAndroidAttachment, inspectAndroidUpload, deleteAndroidUpload, recoverAndroidUpload } from './managed-upload.js';
 import { shakeEmulator } from './emulator-sensors.js';
 import { matchAnrStack } from './anr-stacks.js';
 import { parseRuntimeIncidents } from './runtime-diagnostics.js';
@@ -40,6 +41,11 @@ export interface RuntimeDiagnostics { readonly foregroundPackage?: string; reado
 interface AdbDeviceLine { readonly id: DeviceId; readonly status: Device["status"]; readonly model?: string }
 
 export class AdbDriver implements DeviceDriver {
+  private uploadOptions() { return { directory: this.artifactsDirectory, adbPath: this.adbPath, ...(this.signal ? { signal: this.signal } : {}) }; }
+  public uploadAttachment(device: DeviceId, path: string, mimeType: string, displayName?: string) { return uploadAndroidAttachment(device, path, mimeType, this.uploadOptions(), displayName); }
+  public inspectUpload(device: DeviceId, id: string) { return inspectAndroidUpload(device, id, this.uploadOptions()); }
+  public deleteUpload(device: DeviceId, id: string) { return deleteAndroidUpload(device, id, this.uploadOptions()); }
+  public recoverUpload(device: DeviceId, token: string) { return recoverAndroidUpload(device, token, this.uploadOptions()); }
   public async inspectAttachmentShare(deviceId: DeviceId, operation: string) {
     return readAttachmentShare(operation, args => this.run(['-s', deviceId, ...args]));
   }

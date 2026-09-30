@@ -118,8 +118,10 @@ public final class UploadProvider extends ContentProvider {
         if (selection != null || arguments != null || order != null) throw new IllegalArgumentException("Query modifiers unsupported");
         synchronized (LOCK) {
             try {
-                JSONObject record = load(token(uri));
                 String[] columns = projection == null ? new String[] { "_display_name", "_size", "state", "sha256", "mimeType" } : projection;
+                String id = token(uri);
+                if (!file(id, ".json").exists() && !file(id, ".json.bak").exists()) return new MatrixCursor(columns);
+                JSONObject record = load(id);
                 Object[] row = new Object[columns.length];
                 for (int i = 0; i < columns.length; i++) {
                     String key = columns[i];

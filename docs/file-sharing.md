@@ -17,7 +17,7 @@ URI 必须是带 authority/path 的 `content://`，最多 4096 字符，不接�
 
 动作不上传本地文件、不创建文件 provider，也不删除 URI 所指文件。授权生命周期由 Android 与 URI 所属应用管理；若需要提前撤销，由来源应用执行。系统选择器完整验收、跨用户及真机/OEM 验收仍待完成。
 
-后续托管上传进展：helper 已增加独立上传 provider，完整性验证后可提供只读 URI，并支持显式撤权和删除；API 37 原生链路已验证。正式 CLI/MCP 上传入口及宿主中断恢复仍待接入，分享 Action 本身仍只接收已有 URI。协议与限制见 [托管上传](managed-uploads.md)。
+托管上传已接入 CLI/MCP/SDK，完整性验证后提供只读 URI，并支持显式撤权、删除和绑定租约的中断清理；API 37 已验证真实客户端往返及两个宿主强杀窗口。分享 Action 本身仍只接收已有 URI，其他生命周期故障窗口仍待验收。协议与限制见 [托管上传](managed-uploads.md)。
 
 ## 多附件
 
@@ -37,7 +37,7 @@ adb -s emulator-5554 install -r .appvanta/share-helper/appvanta-share-helper.apk
 }
 ```
 
-支持 2–16 个不同 URI，URI 与 MIME 校验沿用单附件规则；不指定包时由 Android 解析接收者。当前 helper 为非 debuggable、无网络权限的独立应用，Activity 和只读回执 provider 均要求 DUMP 权限。它不读取附件内容，也不持有文件上传功能。
+支持 2–16 个不同 URI，URI 与 MIME 校验沿用单附件规则；不指定包时由 Android 解析接收者。当前 helper 为非 debuggable、无网络权限的独立应用，Activity 和只读回执 provider 均要求 DUMP 权限。分享 Activity 转交 URI；同一应用的独立上传 provider 管理托管文件。
 
 每次调用生成独立 operation。helper 持久保存 `prepared`、`dispatching`、`dispatched`、`cancelled` 或 `rejected` 回执；准备状态只在原 Activity 实例内继续，实例丢失后不能重新创建同一 operation。发送前落盘 `dispatching`，成功返回后才记录 `dispatched`。后者只证明启动调用成功，不证明接收应用实际读取或用户最终选择。
 

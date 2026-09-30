@@ -1,4 +1,6 @@
 export * from "./adb-driver.js";
+export { uploadAndroidAttachment, inspectAndroidUpload, deleteAndroidUpload, recoverAndroidUpload, parseManagedUploadReceipt } from './managed-upload.js';
+export type { ManagedUploadOptions, ManagedUploadReceipt } from './managed-upload.js';
 export * from "./locator.js";
 export * from "./flow.js";
 export * from './doctor.js';

@@ -31,6 +31,9 @@ const batchStore = new BatchStore(resolve('.appvanta/batches'));
 const webhookOrigins = (process.env.APPVANTA_WEBHOOK_ALLOW_ORIGINS ?? '').split(',').map(value => value.trim()).filter(Boolean);
 const webhookSigningSecret = process.env.APPVANTA_WEBHOOK_SIGNING_SECRET ? validateWebhookSigningSecret(process.env.APPVANTA_WEBHOOK_SIGNING_SECRET) : undefined;
 const rawTools = [
+  { name: 'upload_attachment', description: 'Snapshot a local file and upload it to the Android managed provider. Does not share it. Requires installed helper; retains the lease on incomplete upload for explicit recover_upload cleanup.', inputSchema: { type: 'object', additionalProperties: false, properties: { deviceId: { type: 'string', minLength: 1 }, localFile: { type: 'string', minLength: 1 }, mimeType: { type: 'string', minLength: 3, maxLength: 127 }, displayName: { type: 'string', minLength: 1, maxLength: 255 } }, required: ['deviceId', 'localFile', 'mimeType'] } },
+  ...['inspect', 'delete'].map(operation => ({ name: `${operation}_upload`, description: operation === 'inspect' ? 'Read managed upload state without acquiring a lease or authorizing upload/share.' : 'Explicitly revoke and delete one managed upload; records a cleanup operation and retains the lease if deletion is unverified.', inputSchema: { type: 'object', additionalProperties: false, properties: { deviceId: { type: 'string', minLength: 1 }, id: { type: 'string', pattern: '^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$' } }, required: ['deviceId', 'id'] } })),
+  { name: 'recover_upload', description: 'Clean a bound interrupted upload/delete operation using its exact retained device lease token. Deletes owned upload bytes and staging files; never resumes upload or sharing. Once begun cleanup is not cancelled.', inputSchema: { type: 'object', additionalProperties: false, properties: { deviceId: { type: 'string', minLength: 1 }, leaseToken: { type: 'string', pattern: '^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$' } }, required: ['deviceId', 'leaseToken'] } },
   ...adjudicationTools,
   { name: 'start_avd', description: 'Start a configured AVD headlessly or reuse its running instance. Waits for Android boot completion, saves logs, and leaves the process running on timeout. Does not wipe data.', inputSchema: { type: 'object', properties: { name: { type: 'string', pattern: '^[A-Za-z0-9_.-]+$' }, port: { type: 'integer', minimum: 5554, maximum: 5682, multipleOf: 2 }, timeoutMs: { type: 'integer', minimum: 1000, maximum: 600000 }, gpu: { type: 'string', enum: ['auto', 'host', 'software', 'lavapipe', 'swiftshader', 'swangle'] } }, required: ['name'] } },
   { name: 'list_avds', description: 'List locally configured Android Virtual Devices using the installed emulator binary. This inventory does not imply devices are booted or ready.', inputSchema: { type: 'object', properties: {} } },
@@ -115,7 +118,7 @@ async function callTool(name: string | undefined, args: Record<string, unknown>,
   if (name === 'execute_action' && typeof args.deviceId === 'string' && parseAction(args.action).kind === 'shake') {
     return runAndroidAction(args.deviceId, args.action, signal);
   }
-  if (typeof args.deviceId === 'string' && !['run_flow', 'start_flow', 'start_monitor', 'inspect_device_lock', 'inspect_attachment_share', 'recover_flow'].includes(name ?? '')) {
+  if (typeof args.deviceId === 'string' && !['run_flow', 'start_flow', 'start_monitor', 'inspect_device_lock', 'inspect_attachment_share', 'recover_flow', 'upload_attachment', 'inspect_upload', 'delete_upload', 'recover_upload'].includes(name ?? '')) {
     return withDeviceLock(args.deviceId, () => callUnlockedTool(name, args, signal));
   }
   return callUnlockedTool(name, args, signal);
@@ -125,6 +128,10 @@ async function callUnlockedTool(name: string | undefined, args: Record<string, u
   const driver = new AdbDriver({ artifactsDirectory: resolve(".appvanta", "mcp-artifacts", randomUUID()), signal });
   const deviceId = typeof args.deviceId === "string" ? brand<string, "DeviceId">(args.deviceId) : undefined;
   switch (name) {
+    case 'upload_attachment': return driver.uploadAttachment(brand(String(args.deviceId)), String(args.localFile), String(args.mimeType), typeof args.displayName === 'string' ? args.displayName : undefined);
+    case 'inspect_upload': return driver.inspectUpload(brand(String(args.deviceId)), String(args.id));
+    case 'delete_upload': return driver.deleteUpload(brand(String(args.deviceId)), String(args.id));
+    case 'recover_upload': return driver.recoverUpload(brand(String(args.deviceId)), String(args.leaseToken));
     case 'preview_uncertain_task':
     case 'adjudicate_task':
     case 'prepare_adjudicated_task':
