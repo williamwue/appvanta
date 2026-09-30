@@ -1,0 +1,45 @@
+# AppVanta Python SDK (experimental)
+
+Requires Python 3.11+, Node.js, and an installed/built AppVanta MCP server.
+From this repository, run `npm ci`, `npm run build`, then
+`python -m pip install -r python/requirements.lock ./python`.
+This source package has not been published to PyPI.
+
+```python
+import asyncio
+from appvanta import AppVanta
+
+async def main():
+    async with AppVanta.connect("packages/mcp/dist/index.js", cwd=".") as app:
+        print(app.server_version)
+        print(await app.list_devices())
+        print(await app.observe("emulator-5554"))
+
+asyncio.run(main())
+```
+
+Use an absolute `server_script` when calling from another directory. `cwd` owns
+the server's `.appvanta` task, lease, audit and evidence files. Keep that directory
+when reconnecting. The SDK uses Node directly; it does not download an npm server.
+
+`tools()` returns schemas. `call(name, arguments, timeout=seconds)` exposes every
+server tool and decodes its JSON value. `call_raw()` preserves the complete MCP
+result. Convenience methods include `observe`, `execute_action`, `run_flow`,
+`start_flow`, `get_task` and `cancel_task`; they use the same server contracts.
+Planner and Checker remain caller responsibilities.
+
+Tool failures raise `AppVantaToolError` with `.tool` and `.result`. Malformed or
+mixed-content successful responses raise `AppVantaResultError`; use `call_raw`
+when consuming images or other content. Protocol and transport errors retain
+their official MCP exception types. Nothing is automatically retried.
+
+Keep the async context open until calls finish, and enter/exit it in the same
+task. Request timeout/cancellation sends the protocol abandon notification;
+it is not proof of device rollback or completed cleanup. Inspect saved evidence
+and task/lease status before deciding whether to retry. Independent Flow workers
+may continue after the client closes; manage them using task IDs.
+
+This initial SDK is not a stable API promise. Cross-platform installation,
+real-device/OEM behavior, cancellation and disconnect combinations require their
+own acceptance evidence. It reuses the official [MCP Python client](https://py.sdk.modelcontextprotocol.io/client/)
+with `mcp==2.2.0`, using the legacy handshake supported by this AppVanta server.

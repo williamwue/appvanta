@@ -4,6 +4,8 @@
 
 ## 安装与调用
 
+Windows 控制台托管验收补充：公开 `bcd884d` 的 [CI 36669801949](https://github.com/williamwue/appvanta/actions/runs/36669801949) 七项全部通过。Windows 分析归档的 58 个文件已本机逐一核验大小/SHA-256；`perfetto-cancellation-1790744617819` SDK/MCP/CLI 取消分别为 38/55/79 ms，诊断均为 cancelled，解析器与处理器退出且 cleanupError 为 null，归档中均无成功指标或报告。CLI 回执确认独立隐藏控制台仅含 runner 1468 与 CLI 7124，发送真实 CTRL_C_EVENT 后 31 ms 以退出码 1 结束。原始 trace 的三项指标与设备端预期一致；取消夹具仍是重复扩展输入。归档位于集成工作区 `.appvanta/ci-36669801949-analysis-windows/`，完整性回执在同级 `ci-36669801949-analysis-windows-integrity.json`。本次只独立下载核验 Windows 分析归档，其他平台依 CI 任务状态；该快照不含后续宿主强杀、失败产物修正和 SQL 查询中断验证，也不证明所有 Windows 终端环境。
+
 ```powershell
 python -m venv .appvanta/perfetto-venv
 .appvanta/perfetto-venv/Scripts/python.exe -m pip install -r scripts/perfetto-requirements.txt

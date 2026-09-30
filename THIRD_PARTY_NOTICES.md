@@ -29,6 +29,12 @@ Network capture and Perfetto analysis are installed separately by the operator:
 | `mitmproxy` | 11.0.2 | request-level network capture |
 | `perfetto` | 0.58.2 | trace processing |
 | `protobuf` | 7.36.1 | Perfetto dependency pinned by AppVanta |
+| `mcp` / `mcp-types` | 2.2.0 | MIT; official transport and protocol types for the optional Python SDK |
+
+The experimental Python SDK declares `mcp==2.2.0`; its initial tested transitive
+versions are recorded in `python/requirements.lock`, with Windows-only pywin32
+marked explicitly. This lock is an acceptance environment, not vendored Python
+code or a complete self-contained distribution notice inventory.
 
 Their license texts and transitive dependency notices must be collected from the installed distributions when producing a binary or self-contained release. The source repository does not vendor these Python distributions.
 

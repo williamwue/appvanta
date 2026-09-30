@@ -39,6 +39,12 @@ jobs:
       - run: npm ci
       - run: npm run build
       - run: npm test
+      - name: Verify installed Python SDK
+        timeout-minutes: 5
+        run: |
+          python -m pip install -r python/requirements.lock ./python
+          python -m unittest discover -s python/tests
+          python scripts/verify-python-sdk.py
       - name: Verify visual alignment through CLI and MCP
         run: node scripts/verify-visual-alignment.mjs
       - name: Verify Flow template CLI compilation
@@ -162,6 +168,11 @@ jobs:
           node scripts/verify-avd-cancellation.mjs appvanta-ci emulator-5554 mcp
           node scripts/verify-avd-cancellation.mjs appvanta-ci emulator-5554 cli
           node scripts/verify-avd-cancellation.mjs appvanta-ci emulator-5554 mcp new swiftshader
+      - name: Verify Python SDK device observation
+        timeout-minutes: 5
+        run: |
+          python -m pip install -r python/requirements.lock ./python
+          python scripts/verify-python-sdk.py --device emulator-5554
       - name: Download pinned Markor APK
         shell: bash
         run: |
